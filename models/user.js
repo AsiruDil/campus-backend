@@ -34,6 +34,14 @@ const userSchema  =mongoose.Schema({
         type:Number,
         required:false,
     },
+    gender:{
+        type:String,
+        required:false,
+    },
+    birthday:{
+        type:String,
+        required:false,
+    },
     role:{
         type:String,
         required:true,

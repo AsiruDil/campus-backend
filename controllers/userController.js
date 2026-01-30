@@ -22,7 +22,22 @@ export async function createUser(req,res){
                 message:"you are not authorized to create an admin accouts please login first"
             })
             return
-        }
+        } 
+    }
+    if(req.body.role=="madam"){
+        if(req.user!=null){
+            if(req.user.role != "madam"){
+                res.status(403).json({
+                    message:"You are not authorized to create an co-admin account"
+                })
+                return
+            }
+        }else{
+            res.status(403).json({
+                message:"you are not authorized to create an co-admin accouts please login first"
+            })
+            return
+        } 
     }
 
 
@@ -113,4 +128,76 @@ export function loginUser(req,res){
                 }
             }
     })
+}
+
+export async function updateUser(req,res){
+    try{
+
+    
+
+
+       if(req.body.role=="admin"){
+        if(req.user!=null){
+            if(req.user.role != "admin"){
+                res.status(403).json({
+                    message:"You are not authorized to update an admin account"
+                })
+                return
+            }
+        }else{
+            res.status(403).json({
+                message:"you are not authorized to update an admin accouts please login first"
+            })
+            return
+        } 
+    }
+    if(req.body.role=="madam"){
+        if(req.user!=null){
+            if(req.user.role != "madam"){
+                res.status(403).json({
+                    message:"You are not authorized to update an co-admin account"
+                })
+                return
+            }
+        }else{
+            res.status(403).json({
+                message:"you are not authorized to update an co-admin accouts please login first"
+            })
+            return
+        } 
+    }
+
+     const userName=req.user.userName;
+
+    if(req.user.role=="admin"){
+        const update=req.body
+          await User.updateOne({userName:userName},update)
+       res.json({
+        message:"Details update successfuly"
+       })
+    }else{
+    const { id, age, gender, birthday } = req.body
+
+    const updatingData= {
+      id,
+      age,
+      gender,
+      birthday,
+    }
+
+         await User.updateOne({userName:userName},updatingData)
+       res.json({
+        message:"Details update successfuly"
+       })
+    }
+      
+      
+      
+
+    }catch(err){
+        res.status(500).json({
+            message:"internal server error",
+            error:err
+        })
+    }
 }
