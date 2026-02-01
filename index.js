@@ -5,6 +5,8 @@ import bodyParser from "body-parser";
 import cors from "cors";
 import jwt from "jsonwebtoken";
 import userRouter from "./routes/userRoute.js";
+import jobVacancyRouter from "./routes/jobVacancyRouter.js";
+import applyRouter from "./routes/applyRouter.js";
 
 dotenv.config();
 const app=express()
@@ -29,7 +31,7 @@ app.use((req,res,next)=>{
             }
         )
     }else{
-        next();
+        next(); 
     }
 })
 
@@ -40,6 +42,8 @@ mongoose.connect(process.env.MONGODB_URL).then(()=>{
 })
 
 app.use("/api/users",userRouter)
+app.use('/api/jobs',jobVacancyRouter);
+app.use('/api/apply',applyRouter)
 
 app.listen(3000,()=>{
     console.log('server is running on port 3000')

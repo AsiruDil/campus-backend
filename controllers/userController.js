@@ -233,7 +233,7 @@ export async function getUser(req,res){
             })
             return
         }
-        if(user.isBlocked==false && user.role != "admin" && user.role != "madam" ){
+        if(user.isBlocked==false && user.role != "admin" || user.role != "madam" ){
             res.json(user)
         }
         else{
