@@ -7,6 +7,7 @@ import jwt from "jsonwebtoken";
 import userRouter from "./routes/userRoute.js";
 import jobVacancyRouter from "./routes/jobVacancyRouter.js";
 import applyRouter from "./routes/applyRouter.js";
+import User from "./models/user.js";
 
 dotenv.config();
 const app=express()
@@ -47,4 +48,4 @@ app.use('/api/apply',applyRouter)
 
 app.listen(3000,()=>{
     console.log('server is running on port 3000')
-})  
+})   

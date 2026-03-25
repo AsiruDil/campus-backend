@@ -3,41 +3,41 @@ import { isAdmin } from "./userController.js"
 
 
 export async function createJob(req, res) {
-    // if (!req.user) {
-    //     return res.status(403).json({
-    //         message: "Please log in and try again"
-    //     });
-    // }
-
-    // if(!isAdmin(req)){
-    //     return res.status(403).json({
-    //         message:"You are not authorized to create job vacancies"
-    //     })
-        
-    // }
-
     try {
+        let jobId = "JOB00001";
+
+        const lastJob = await JobVacancy
+            .findOne()
+            .sort({ jobId: -1 });
+
+        if (lastJob) {
+            const lastNumber = parseInt(lastJob.jobId.replace("JOB", ""));
+            jobId = "JOB" + (lastNumber + 1).toString().padStart(5, "0");
+        }
+
         const jobVacancy = new JobVacancy({
-            jobId: req.body.jobId,
-            jobRole:req.body.jobRole,
-            location:req.body.location,
-            faculty:req.body.faculty,
-            department:req.body.department,
-            jobDescription:req.body.jobDescription,
-            jobResponsibilities:req.body.jobResponsibilities,
-            postDate:req.body.postDate,
-            deadline:req.body.deadline,
-            jobType:req.body.jobType,
-            salary:req.body.salary
-    });
+            jobId,
+            jobRole: req.body.jobRole,
+            location: req.body.location,
+            faculty: req.body.faculty,
+            department: req.body.department,
+            jobDescription: req.body.jobDescription,
+            jobResponsibilities: req.body.jobResponsibilities,
+            postDate: req.body.postDate,
+            deadline: req.body.deadline,
+            jobType: req.body.jobType,
+            salary: req.body.salary
+        });
 
         await jobVacancy.save();
-        res.status(201).send({ message: "Job Vacancy Created Successfully" });
-        
-    }
-    catch (err) {
-        res.status(500).send({ message: "Error Creating Job Vacancy", error: err });
-         
+
+        res.status(201).json({ message: "Job Vacancy Created Successfully" });
+
+    } catch (err) {
+        res.status(500).json({
+            message: "Failed to save. Ensure Job ID is unique.",
+            error: err
+        });
     }
 }
 

@@ -2,44 +2,32 @@ import User from "../models/user.js"
 import bcrypt from "bcrypt"
 import jwt from "jsonwebtoken";
 import dotenv from 'dotenv';
+import nodemailer from 'nodemailer';
+import Message from "../models/message.js";
 
 dotenv.config()
 
 export async function createUser(req,res){
 
-  
+    // ❌ OLD: madam controlling madam (wrong)
 
-    if(req.body.role=="admin"){
-        if(req.user!=null){
-            if(req.user.role != "admin"){
-                res.status(403).json({
-                    message:"You are not authorized to create an admin account"
-                })
-                return
-            }
-        }else{
-            res.status(403).json({
-                message:"you are not authorized to create an admin accouts please login first"
+    // ✅ FIXED: only admin can create admin
+    if(req.body.role === "admin"){
+        if(!req.user || req.user.role !== "admin"){
+            return res.status(403).json({
+                message:"Only admin can create admin"
             })
-            return
-        } 
-    }
-    if(req.body.role=="madam"){
-        if(req.user!=null){
-            if(req.user.role != "madam"){
-                res.status(403).json({
-                    message:"You are not authorized to create an co-admin account"
-                })
-                return
-            }
-        }else{
-            res.status(403).json({
-                message:"you are not authorized to create an co-admin accouts please login first"
-            })
-            return
-        } 
+        }
     }
 
+    // ✅ FIXED: only admin can create moderator (madam)
+    if(req.body.role === "madam"){
+        if(!req.user || req.user.role !== "admin"){
+            return res.status(403).json({
+                message:"Only admin can create moderator"
+            })
+        }
+    }
 
 
     const hashedPassword=bcrypt.hashSync(req.body.password,10)
@@ -99,11 +87,17 @@ export function loginUser(req,res){
         ]
     }).then((user)=>{
             if(user==null){
-                res.status(404).json({
-                    message:"User not found"
-                })
+                res.status(404).json({ message:"User not found" })
                 return
-            }else{
+            }
+            
+            // ✅ NEW: Prevent login if the account is blocked
+            if(user.isBlocked){
+                res.status(403).json({ message:"Your account has been blocked. Please contact support." })
+                return
+            }
+
+            else{
                 const isPasswordCorrect=bcrypt.compareSync(password,user.password)
                 if(isPasswordCorrect){
                     const token = jwt.sign({
@@ -122,84 +116,61 @@ export function loginUser(req,res){
                     type:user.role
                   })
                 }else{
-                    res.status(401).json({
-                        message:"invalid password"
-                    })
+                    res.status(401).json({ message:"invalid password" })
                 }
             }
     })
 }
 
-export async function updateUser(req,res){
-    try{
+export async function updateUser(req, res) {
+    try {
+        const userName = req.params.userName;
 
-    
-
-
-       if(req.body.role=="admin"){
-        if(req.user!=null){
-            if(req.user.role != "admin"){
-                res.status(403).json({
-                    message:"You are not authorized to update an admin account"
-                })
-                return
+        // ✅ Only admin can change roles
+        if (req.body.role === "admin" || req.body.role === "madam") {
+            if (!req.user || req.user.role !== "admin") {
+                return res.status(403).json({
+                    message: "Only admin can change roles"
+                });
             }
-        }else{
-            res.status(403).json({
-                message:"you are not authorized to update an admin accouts please login first"
-            })
-            return
-        } 
-    }
-    if(req.body.role=="madam"){
-        if(req.user!=null){
-            if(req.user.role != "madam"){
-                res.status(403).json({
-                    message:"You are not authorized to update an co-admin account"
-                })
-                return
-            }
-        }else{
-            res.status(403).json({
-                message:"you are not authorized to update an co-admin accouts please login first"
-            })
-            return
-        } 
-    }
+        }
 
-     const userName=req.user.userName;
+        // ✅ Admin can update any user
+        if (req.user.role === "admin") {
+            await User.updateOne(
+                { userName: userName },
+                { $set: req.body } 
+            );
+            return res.json({
+                message: "User updated successfully"
+            });
+        }  
 
-    if(req.user.role=="admin"){
-        const update=req.body
-          await User.updateOne({userName:userName},update)
-       res.json({
-        message:"Details update successfuly"
-       })
-    }else{
-    const { id, age, gender, birthday,img } = req.body
+       
+        if (req.user.userName !== userName) {
+            return res.status(403).json({
+                message: "You can only update your own profile"
+            });
+        }
 
-    const updatingData= {
-      id,
-      age,
-      gender,
-      birthday,
-      img
-    }
+        const { age, gender, birthday, img } = req.body;
+        const updatingData = { age, gender, birthday, img };
 
-         await User.updateOne({userName:userName},updatingData)
-       res.json({
-        message:"Details update successfuly"
-       })
-    }
-      
-      
-      
+        await User.updateOne(
+            { userName: userName },
+            { $set: updatingData }
+        );
 
-    }catch(err){
+        res.json({
+            message: "Details updated successfully"
+        });
+
+    } catch (err) {
+        console.error(err);
         res.status(500).json({
-            message:"internal server error",
-            error:err
-        })
+            message: "Internal server error",
+            error: err
+        });
     }
 }
 export function isAdmin(req){
@@ -219,13 +190,14 @@ export function isAdmin(req){
 export async function getUser(req,res){
     const userName=req.params.userName
     try{
-        if(req.user==null){
-            return
+      
+        if(!req.user){
+            return res.status(401).json({
+                message:"Unauthorized"
+            })
         }
   
-        const user=await User.findOne(
-            {userName:userName}
-        )
+        const user=await User.findOne({userName:userName})
 
         if(user==null){
             res.status(404).json({
@@ -233,7 +205,12 @@ export async function getUser(req,res){
             })
             return
         }
-        if(user.isBlocked==false && user.role != "admin" || user.role != "madam" ){
+        
+        if (req.user.userName === userName) {
+            return res.json(user);
+        }
+
+        if(user.isBlocked === false && user.role !== "admin" && user.role !== "madam"){
             res.json(user)
         }
         else{
@@ -246,29 +223,121 @@ export async function getUser(req,res){
             }
         }
 
-}catch(err){
-    res.status(500).json({
-        message:"internal error",
-        error:err
-    })
-}
-
+    }catch(err){
+        res.status(500).json({
+            message:"internal error",
+            error:err
+        })
+    }
 }
 
 export async function getAllUsers(req,res) {
     try{
-      if(isAdmin(req)){
-        const user=await User.find()
-        res.json(user)
-      }else{
-        res.status(403).json({
-            message:"not authorized"
-        })
-      }
+        if(isAdmin(req)){
+            const user=await User.find()
+            res.json(user)
+        }else{
+            res.status(403).json({
+                message:"not authorized"
+            })
+        }
     }catch(error){
+   
         res.json({
             message:"failed to get Users",
-            error:err
+            error:error
         })
+    }
+}
+
+export async function toggleBlockUser(req, res) {
+    if (!req.user || req.user.role !== "admin") {
+        return res.status(403).json({ message: "Unauthorized: Admins Only" });
+    }
+
+    try {
+        const user = await User.findOne({ userName: req.params.userName });
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        user.isBlocked = !user.isBlocked;
+        await user.save();
+
+        res.json({ 
+            message: `User ${user.isBlocked ? 'blocked' : 'unblocked'} successfully`,
+            isBlocked: user.isBlocked 
+        });
+    } catch (error) {
+        res.status(500).json({ message: "Toggle block status failed" });
+    }
+}
+
+
+
+// 1. Email යවන සහ Save කරන Function එක
+export async function sendGroupEmail(req, res) {
+    const { emails, subject, message } = req.body; 
+
+    if (!emails || emails.length === 0) {
+        return res.status(400).json({ message: "No email addresses provided" });
+    }
+
+    try {
+        // --- Nodemailer Setup ---
+        const transporter = nodemailer.createTransport({
+            service: 'gmail',
+            auth: {
+                user: process.env.EMAIL_USER, 
+                pass: process.env.EMAIL_PASS 
+            }
+        });
+
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            bcc: emails.join(','),
+            subject: subject,
+            text: message
+        };
+
+        // Email එක යැවීම
+        await transporter.sendMail(mailOptions);
+        
+        // --- Database එකේ Save කිරීම ---
+        // Email එක සාර්ථකව ගියොත් පමණක් DB එකට දත්ත ඇතුලත් වේ
+        const newMessage = new Message({
+            recipients: emails,
+            subject: subject,
+            message: message
+        });
+        await newMessage.save();
+
+        res.json({ message: "Emails sent and history saved successfully!" });
+
+    } catch (error) {
+        console.error("Operation failed:", error);
+        res.status(500).json({ message: "Failed to process request", error: error.message });
+    }
+}
+
+
+export async function getSentMessages(req, res) {
+    try {
+    
+        const history = await Message.find().sort({ date: -1 });
+        res.status(200).json(history);
+    } catch (error) {
+        res.status(500).json({ message: "Error fetching message history", error: error.message });
+    }
+}
+
+// 
+export async function getMessagesByEmail(req, res) {
+    const { email } = req.params; 
+
+    try {
+      
+        const history = await Message.find({ recipients: email }).sort({ date: -1 });
+        res.status(200).json(history);
+    } catch (error) {
+        res.status(500).json({ message: "Error fetching user history", error: error.message });
     }
 }
