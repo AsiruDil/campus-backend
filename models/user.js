@@ -1,69 +1,79 @@
 import mongoose from "mongoose";
 
-const userSchema  =mongoose.Schema({
-    email:{
-        type:String,
-        required:true,
-        unique:true,
+const userSchema = mongoose.Schema({
+    email: {
+        type: String,
+        required: true,
+        unique: true,
     },
-     userName:{
-        type:String,
-        unique:true,
-        required:true,
+    userName: {
+        type: String,
+        unique: true,
+        required: true,
     },
-    firstName:{
-        type:String,
-        required:true,
+    firstName: {
+        type: String,
+        required: true,
     },
-    lastName:{
-        type:String,
-        required:true,
+    lastName: {
+        type: String,
+        required: true,
+    },
+    password: {
+        type: String,
+        required: true,
+    },
+    id: {
+        type: String,
+        required: false,
+    },
+    age: {
+        type: Number,
+        required: false,
+    },
+    gender: {
+        type: String,
+        required: false,
+    },
+    birthday: {
+        type: String,
+        required: false,
+    },
+    role: {
+        type: String,
+        required: true,
+        default: "user"
+    },
+    isBlocked: {
+        type: Boolean,
+        required: true,
+        default: false
+    },
+    img: {
+        type: String,
+        required: false,
+        default: "https://avatar.iran.liara.run/public/boy?username=Ash"
+    },
+    date: {
+        type: Date,
+        default: Date.now
     },
 
-    password:{
-        type:String,
-        required:true,
+    isVerified: {
+        type: Boolean,
+        default: false 
     },
-   
-    id:{
-        type:String,
-        required:false,
-
+    otp: {
+        type: String,
+        required: false,
+        default: null
     },
-    age:{
-        type:Number,
-        required:false,
-    },
-    gender:{
-        type:String,
-        required:false,
-    },
-    birthday:{
-        type:String,
-        required:false,
-    },
-    role:{
-        type:String,
-        required:true,
-        default:"user"
-    },
-    isBlocked:{
-        type:Boolean,
-        required:true,
-        default:false
-    },
-    img:{
-        type:String,
-        required:false,
-        default:"https://avatar.iran.liara.run/public/boy?username=Ash"
-    },
-    date:{
-        type:Date,
-        default:Date.now
+    otpExpires: {
+        type: Date,
+        required: false,
+        default: null
     }
+}); 
 
-
-}) 
-
-const User=mongoose.model("users",userSchema)
+const User = mongoose.model("users", userSchema);
 export default User;

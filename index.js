@@ -33,7 +33,7 @@ app.use((req,res,next)=>{
         )
     }else{
         next(); 
-    }
+    } 
 })
 
 mongoose.connect(process.env.MONGODB_URL).then(()=>{

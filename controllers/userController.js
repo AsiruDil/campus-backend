@@ -7,9 +7,10 @@ import Message from "../models/message.js";
 
 dotenv.config()
 
-export async function createUser(req,res){
+// Helper function to generate a 6-digit OTP
+const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
-    // ❌ OLD: madam controlling madam (wrong)
+export async function createUser(req,res){
 
     // ✅ FIXED: only admin can create admin
     if(req.body.role === "admin"){
@@ -29,50 +30,59 @@ export async function createUser(req,res){
         }
     }
 
-
-    const hashedPassword=bcrypt.hashSync(req.body.password,10)
-    const user =new User({
-        email:req.body.email,
-        userName:req.body.userName,
-        firstName: req.body.firstName,
-        lastName :req.body.lastName,
-        password:hashedPassword,
-        role:req.body.role,
-    })
-
     try{    
-            const findName = await User.findOne({userName:req.body.userName})
-            const findEmail = await User.findOne({email:req.body.email})
+        const findName = await User.findOne({userName:req.body.userName})
+        const findEmail = await User.findOne({email:req.body.email})
 
-            if(findName!=null){
-                res.status(403).json({
-                    message:"UserName already exit"
-                })
-                return
-            }
-             else if(findEmail!=null){
-                res.status(403).json({
-                    message:"Gmail already exit"
-                })
-                return
-            }
+        if(findName!=null){
+            return res.status(403).json({ message:"UserName already exists" })
+        }
+        else if(findEmail!=null){
+             return res.status(403).json({ message:"Email already exists" })
+        }
 
-            else{
-  
-                await user.save()
-                res.json({
-                message:"user created suceessfully"
-       })
-    }
-            
-      
-    }catch(err){
-            res.status(500).json({
-            message:"failed to create user",
-            error:err
+        const hashedPassword=bcrypt.hashSync(req.body.password,10)
+        
+        // --- NEW: Generate OTP and Expiration ---
+        const otp = generateOTP();
+        const otpExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+
+        const user = new User({
+            email:req.body.email,
+            userName:req.body.userName,
+            firstName: req.body.firstName,
+            lastName :req.body.lastName,
+            password:hashedPassword,
+            role:req.body.role,
+            otp: otp, // Save OTP
+            otpExpires: otpExpires // Save Expiration
         })
-    
-}
+
+        await user.save()
+
+        // --- NEW: Send Verification Email ---
+        const transporter = nodemailer.createTransport({
+            service: 'gmail',
+            auth: {
+                user: process.env.EMAIL_USER, 
+                pass: process.env.EMAIL_PASS 
+            }
+        });
+
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: req.body.email,
+            subject: "Verify Your Account - Job Finder",
+            text: `Welcome to Job Finder! Your verification OTP is: ${otp}. It will expire in 10 minutes.`
+        };
+
+        await transporter.sendMail(mailOptions);
+
+        res.json({ message:"User created successfully. Please check your email for the OTP." })
+            
+    }catch(err){
+        res.status(500).json({ message:"failed to create user", error:err })
+    }
 }
 
 export function loginUser(req,res){
@@ -97,29 +107,130 @@ export function loginUser(req,res){
                 return
             }
 
-            else{
-                const isPasswordCorrect=bcrypt.compareSync(password,user.password)
-                if(isPasswordCorrect){
-                    const token = jwt.sign({
-                        email:user.email,
-                        userName:user.userName,
-                        firstName:user.firstName,
-                        lastName:user.lastName,
-                        role:user.role,
-                        img:user.img
-                    },
-                      process.env.JWT_KEY
-                )
-                  res.json({
-                    message:"login successfully",
-                    token:token,
-                    type:user.role
-                  })
-                }else{
-                    res.status(401).json({ message:"invalid password" })
-                }
+            // --- NEW: Prevent login if email is not verified ---
+            if(!user.isVerified){
+                res.status(403).json({ message:"Please verify your email address before logging in." })
+                return
+            }
+
+            const isPasswordCorrect=bcrypt.compareSync(password,user.password)
+            if(isPasswordCorrect){
+                const token = jwt.sign({
+                    email:user.email,
+                    userName:user.userName,
+                    firstName:user.firstName,
+                    lastName:user.lastName,
+                    role:user.role,
+                    img:user.img
+                },
+                  process.env.JWT_KEY
+            )
+              res.json({
+                message:"login successfully",
+                token:token,
+                type:user.role
+              })
+            }else{
+                res.status(401).json({ message:"invalid password" })
             }
     })
+}
+
+
+// ==========================================
+// NEW CONTROLLER: Verify Email OTP
+// ==========================================
+export async function verifyEmail(req, res) {
+    const { email, otp } = req.body;
+  
+    try {
+      const user = await User.findOne({ email });
+      if (!user) return res.status(404).json({ message: "User not found" });
+  
+      if (user.otp !== otp) {
+        return res.status(400).json({ message: "Invalid OTP" });
+      }
+      if (user.otpExpires < Date.now()) {
+        return res.status(400).json({ message: "OTP has expired. Please register again or request a new one." });
+      }
+  
+      user.isVerified = true;
+      user.otp = null;
+      user.otpExpires = null;
+      await user.save();
+  
+      res.status(200).json({ message: "Email verified successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Server error", error: error.message });
+    }
+}
+
+// ==========================================
+// NEW CONTROLLER: Request Password Reset
+// ==========================================
+export async function forgotPassword(req, res) {
+    const { email } = req.body;
+  
+    try {
+      const user = await User.findOne({ email });
+      if (!user) return res.status(404).json({ message: "User not found" });
+  
+      const otp = generateOTP();
+      user.otp = otp;
+      user.otpExpires = Date.now() + 10 * 60 * 1000; // 10 mins
+      await user.save();
+  
+      const transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+            user: process.env.EMAIL_USER, 
+            pass: process.env.EMAIL_PASS 
+        }
+      });
+  
+      const mailOptions = {
+        from: process.env.EMAIL_USER,
+        to: user.email,
+        subject: "Password Reset OTP - Job Finder",
+        text: `Your OTP for password reset is: ${otp}. It is valid for 10 minutes.`
+      };
+  
+      await transporter.sendMail(mailOptions);
+  
+      res.status(200).json({ message: "OTP sent to email successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Server error", error: error.message });
+    }
+}
+
+// ==========================================
+// NEW CONTROLLER: Verify OTP & Change Password
+// ==========================================
+export async function resetPassword(req, res) {
+    const { email, otp, newPassword } = req.body;
+  
+    try {
+      const user = await User.findOne({ email });
+      if (!user) return res.status(404).json({ message: "User not found" });
+  
+      if (user.otp !== otp) {
+        return res.status(400).json({ message: "Invalid OTP" });
+      }
+      if (user.otpExpires < Date.now()) {
+        return res.status(400).json({ message: "OTP has expired. Please request a new one." });
+      }
+  
+      const hashedPassword = bcrypt.hashSync(newPassword, 10);
+  
+      user.password = hashedPassword;
+      user.otp = null;
+      user.otpExpires = null;
+      await user.save();
+  
+      res.status(200).json({ message: "Password reset successfully" });
+    } catch (error) {
+      res.status(500).json({ message: "Server error", error: error.message });
+    }
 }
 
 export async function updateUser(req, res) {
@@ -340,4 +451,27 @@ export async function getMessagesByEmail(req, res) {
     } catch (error) {
         res.status(500).json({ message: "Error fetching user history", error: error.message });
     }
+}
+
+export function googleAuthCallback(req, res) {
+    // req.user contains the user data from Passport
+    const user = req.user;
+
+    // Prevent login if blocked
+    if (user.isBlocked) {
+        return res.redirect(`${process.env.FRONTEND_URL}/?error=blocked`);
+    }
+
+    // Generate JWT token
+    const token = jwt.sign({
+        email: user.email,
+        userName: user.userName,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        role: user.role,
+        img: user.img
+    }, process.env.JWT_KEY);
+
+    // Redirect back to frontend with the token and user type
+    res.redirect(`${process.env.FRONTEND_URL}/?token=${token}&type=${user.role}`);
 }
