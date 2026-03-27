@@ -10,19 +10,22 @@ dotenv.config()
 // Helper function to generate a 6-digit OTP
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
+// ✅ Render/Cloud servers සඳහා වඩාත් ගැලපෙන Transporter එක
 const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
-    port: 465,
-    secure: true, // Use SSL
+    port: 587, // 465 වෙනුවට 587 පාවිච්චි කරමු
+    secure: false, // Port 587 සඳහා මෙය false විය යුතුයි
     auth: {
         user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS // ⚠️ අනිවාර්යයෙන්ම Google App Password එකක් විය යුතුය
+        pass: process.env.EMAIL_PASS 
     },
     tls: {
-        rejectUnauthorized: false // Cloud servers වලදී connection block වීම වැළැක්වීමට
-    }
+        rejectUnauthorized: false // Security blocks මගහැරීමට
+    },
+    connectionTimeout: 10000, // සම්බන්ධ වීමට තත්පර 10ක් ලබා දෙයි
+    greetingTimeout: 10000,
+    socketTimeout: 10000
 });
-
 export async function createUser(req, res) {
     // Admin checks
     if (req.body.role === "admin" || req.body.role === "madam") {
