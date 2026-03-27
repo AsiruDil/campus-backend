@@ -10,6 +10,19 @@ dotenv.config()
 // Helper function to generate a 6-digit OTP
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
+const transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true, // Use SSL
+    auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS // ⚠️ අනිවාර්යයෙන්ම Google App Password එකක් විය යුතුය
+    },
+    tls: {
+        rejectUnauthorized: false // Cloud servers වලදී connection block වීම වැළැක්වීමට
+    }
+});
+
 export async function createUser(req, res) {
     // Admin checks
     if (req.body.role === "admin" || req.body.role === "madam") {
@@ -42,29 +55,26 @@ export async function createUser(req, res) {
 
         await user.save();
 
-        // ✅ Nodemailer Transport (Better for Cloud Servers)
-        const transporter = nodemailer.createTransport({
-            host: 'smtp.gmail.com',
-            port: 465,
-            secure: true, // SSL
-            auth: {
-                user: process.env.EMAIL_USER,
-                pass: process.env.EMAIL_PASS // ⚠️ Must be Google App Password
-            }
-        });
-
+        // ✅ 2. Email එක යැවීමේ කොටස
         const mailOptions = {
             from: `"Job Finder" <${process.env.EMAIL_USER}>`,
             to: req.body.email,
             subject: "Verify Your Account - Job Finder",
-            text: `Your verification OTP is: ${otp}. Valid for 10 minutes.`
+            text: `Welcome to Job Finder! Your verification OTP is: ${otp}. It will expire in 10 minutes.`
         };
 
-        await transporter.sendMail(mailOptions);
-        res.json({ message: "User created. Check your email for OTP." });
+        try {
+            await transporter.sendMail(mailOptions);
+            console.log("✅ Registration OTP sent successfully to:", req.body.email);
+            res.json({ message: "User created successfully. Please check your email for the OTP." });
+        } catch (emailErr) {
+            console.error("❌ NODEMAILER ERROR (Registration):", emailErr);
+            // User සේව් වුණත් email එක අසාර්ථක වුවහොත් පණිවිඩය වෙනස් කරයි
+            res.status(500).json({ message: "User created, but failed to send OTP email.", error: emailErr.message });
+        }
 
     } catch (err) {
-        console.error("CRITICAL REGISTRATION ERROR:", err); // ✅ Render Logs වල ලෙඩේ බලාගන්න
+        console.error("❌ CRITICAL REGISTRATION ERROR:", err);
         res.status(500).json({ message: "Registration failed", error: err.message });
     }
 }
@@ -81,27 +91,20 @@ export function loginUser(req, res) {
         ]
     }).then((user) => {
         if (user == null) {
-            res.status(404).json({ message: "User not found" });
-            return;
+            return res.status(404).json({ message: "User not found" });
         }
         
-        // ✅ Prevent login if the account is blocked
         if (user.isBlocked) {
-            res.status(403).json({ message: "Your account has been blocked. Please contact support." });
-            return;
+            return res.status(403).json({ message: "Your account has been blocked. Please contact support." });
         }
 
-        // ✅ Prevent login if email is not verified
         if (!user.isVerified) {
-            res.status(403).json({ message: "Please verify your email address before logging in." });
-            return;
+            return res.status(403).json({ message: "Please verify your email address before logging in." });
         }
 
-        // Check password
         const isPasswordCorrect = bcrypt.compareSync(password, user.password);
         
         if (isPasswordCorrect) {
-            // Generate Token
             const token = jwt.sign(
                 {
                     email: user.email,
@@ -111,7 +114,7 @@ export function loginUser(req, res) {
                     role: user.role,
                     img: user.img
                 },
-                process.env.JWT_KEY,
+                process.env.JWT_KEY, // ✅ Ensure this matches your ENV
                 { expiresIn: '1d' } 
             );
             
@@ -124,12 +127,10 @@ export function loginUser(req, res) {
             res.status(401).json({ message: "invalid password" });
         }
     }).catch((error) => {
-        // ✅ Added error handling so your server doesn't crash on DB issues
         console.error("Login Error:", error);
         res.status(500).json({ message: "Internal server error" });
     });
 }
-
 // ==========================================
 // NEW CONTROLLER: Verify Email OTP
 // ==========================================
@@ -144,7 +145,7 @@ export async function verifyEmail(req, res) {
         return res.status(400).json({ message: "Invalid OTP" });
       }
       if (user.otpExpires < Date.now()) {
-        return res.status(400).json({ message: "OTP has expired. Please register again or request a new one." });
+        return res.status(400).json({ message: "OTP has expired." });
       }
   
       user.isVerified = true;
@@ -170,35 +171,25 @@ export async function forgotPassword(req, res) {
   
       const otp = generateOTP();
       user.otp = otp;
-      user.otpExpires = Date.now() + 10 * 60 * 1000; // 10 mins
+      user.otpExpires = Date.now() + 10 * 60 * 1000;
       await user.save();
   
-      const transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: {
-            user: process.env.EMAIL_USER, 
-            pass: process.env.EMAIL_PASS 
-        }
-      });
-  
       const mailOptions = {
-        from: process.env.EMAIL_USER,
+        from: `"Job Finder" <${process.env.EMAIL_USER}>`,
         to: user.email,
         subject: "Password Reset OTP - Job Finder",
         text: `Your OTP for password reset is: ${otp}. It is valid for 10 minutes.`
       };
   
       await transporter.sendMail(mailOptions);
-  
+      console.log("✅ Forgot Password OTP sent to:", user.email);
       res.status(200).json({ message: "OTP sent to email successfully" });
     } catch (error) {
-      res.status(500).json({ message: "Server error", error: error.message });
+      console.error("❌ NODEMAILER ERROR (Forgot Password):", error);
+      res.status(500).json({ message: "Failed to send reset OTP", error: error.message });
     }
 }
 
-// ==========================================
-// NEW CONTROLLER: Verify OTP & Change Password
-// ==========================================
 export async function resetPassword(req, res) {
     const { email, otp, newPassword } = req.body;
   
@@ -206,16 +197,10 @@ export async function resetPassword(req, res) {
       const user = await User.findOne({ email });
       if (!user) return res.status(404).json({ message: "User not found" });
   
-      if (user.otp !== otp) {
-        return res.status(400).json({ message: "Invalid OTP" });
-      }
-      if (user.otpExpires < Date.now()) {
-        return res.status(400).json({ message: "OTP has expired. Please request a new one." });
-      }
+      if (user.otp !== otp) return res.status(400).json({ message: "Invalid OTP" });
+      if (user.otpExpires < Date.now()) return res.status(400).json({ message: "OTP has expired." });
   
-      const hashedPassword = bcrypt.hashSync(newPassword, 10);
-  
-      user.password = hashedPassword;
+      user.password = bcrypt.hashSync(newPassword, 10);
       user.otp = null;
       user.otpExpires = null;
       await user.save();
@@ -225,7 +210,6 @@ export async function resetPassword(req, res) {
       res.status(500).json({ message: "Server error", error: error.message });
     }
 }
-
 export async function updateUser(req, res) {
     try {
         const userName = req.params.userName;
@@ -385,17 +369,8 @@ export async function sendGroupEmail(req, res) {
     }
 
     try {
-        // --- Nodemailer Setup ---
-        const transporter = nodemailer.createTransport({
-            service: 'gmail',
-            auth: {
-                user: process.env.EMAIL_USER, 
-                pass: process.env.EMAIL_PASS 
-            }
-        });
-
         const mailOptions = {
-            from: process.env.EMAIL_USER,
+            from: `"Job Finder Admin" <${process.env.EMAIL_USER}>`,
             bcc: emails.join(','),
             subject: subject,
             text: message
@@ -403,7 +378,6 @@ export async function sendGroupEmail(req, res) {
 
         await transporter.sendMail(mailOptions);
         
-      
         const newMessage = new Message({
             recipients: emails,
             subject: subject,
@@ -414,8 +388,8 @@ export async function sendGroupEmail(req, res) {
         res.json({ message: "Emails sent and history saved successfully!" });
 
     } catch (error) {
-        console.error("Operation failed:", error);
-        res.status(500).json({ message: "Failed to process request", error: error.message });
+        console.error("❌ GROUP EMAIL FAILED:", error);
+        res.status(500).json({ message: "Failed to send group emails", error: error.message });
     }
 }
 
@@ -444,15 +418,12 @@ export async function getMessagesByEmail(req, res) {
 }
 
 export function googleAuthCallback(req, res) {
-    // req.user contains the user data from Passport
     const user = req.user;
 
-    // Prevent login if blocked
     if (user.isBlocked) {
         return res.redirect(`${process.env.FRONTEND_URL}/?error=blocked`);
     }
 
-    // Generate JWT token
     const token = jwt.sign({
         email: user.email,
         userName: user.userName,
@@ -462,8 +433,7 @@ export function googleAuthCallback(req, res) {
         img: user.img
     }, process.env.JWT_KEY,
     { expiresIn: '1d' }
-);  
+    );  
 
-    // Redirect back to frontend with the token and user type
     res.redirect(`${process.env.FRONTEND_URL}/?token=${token}&type=${user.role}`);
 }
