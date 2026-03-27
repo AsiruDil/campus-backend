@@ -8,7 +8,13 @@ import { Resend } from 'resend';
 
 dotenv.config()
 
-const resend = new Resend(process.env.RESEND_API_KEY);
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: process.env.EMAIL_USER, 
+        pass: process.env.EMAIL_PASS // ⚠️ මෙතනට අනිවාර්යයෙන්ම App Password එක දෙන්න
+    }
+});
 
 // Helper function to generate a 6-digit OTP
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
@@ -44,18 +50,20 @@ export async function createUser(req, res) {
 
         await user.save();
 
-        // ✅ 2. Email එක යැවීම (Resend හරහා)
+        // ✅ Gmail හරහා OTP යැවීම
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: req.body.email,
+            subject: 'Verify Your Account - Job Finder',
+            html: `<p>Welcome to Job Finder! Your verification OTP is: <strong>${otp}</strong>. It will expire in 10 minutes.</p>`
+        };
+
         try {
-            await resend.emails.send({
-                from: 'onboarding@resend.dev', // ⚠️ මුලින්ම මෙය භාවිතා කරන්න
-                to: req.body.email,
-                subject: 'Verify Your Account - Job Finder',
-                html: `<p>Welcome to Job Finder! Your verification OTP is: <strong>${otp}</strong>. It will expire in 10 minutes.</p>`
-            });
-            console.log("✅ Registration OTP sent successfully via Resend to:", req.body.email);
+            await transporter.sendMail(mailOptions);
+            console.log("✅ OTP sent successfully via Gmail to:", req.body.email);
             res.json({ message: "User created successfully. Please check your email for the OTP." });
         } catch (emailErr) {
-            console.error("❌ RESEND ERROR:", emailErr);
+            console.error("❌ NODEMAILER ERROR:", emailErr);
             res.status(500).json({ message: "User created, but failed to send OTP email.", error: emailErr.message });
         }
 
@@ -64,28 +72,16 @@ export async function createUser(req, res) {
         res.status(500).json({ message: "Registration failed", error: err.message });
     }
 }
+
 export function loginUser(req, res) {
-    const email = req.body.email;
-    const password = req.body.password;
-    const userName = req.body.userName;
+    const { email, password, userName } = req.body;
 
     User.findOne({
-        $or: [
-            { email: email },
-            { userName: userName }
-        ]
+        $or: [{ email: email }, { userName: userName }]
     }).then((user) => {
-        if (user == null) {
-            return res.status(404).json({ message: "User not found" });
-        }
-        
-        if (user.isBlocked) {
-            return res.status(403).json({ message: "Your account has been blocked. Please contact support." });
-        }
-
-        if (!user.isVerified) {
-            return res.status(403).json({ message: "Please verify your email address before logging in." });
-        }
+        if (!user) return res.status(404).json({ message: "User not found" });
+        if (user.isBlocked) return res.status(403).json({ message: "Account blocked." });
+        if (!user.isVerified) return res.status(403).json({ message: "Please verify your email." });
 
         const isPasswordCorrect = bcrypt.compareSync(password, user.password);
         
@@ -99,54 +95,37 @@ export function loginUser(req, res) {
                     role: user.role,
                     img: user.img
                 },
-                process.env.JWT_KEY, // ✅ Ensure this matches your ENV
+                process.env.JWT_KEY,
                 { expiresIn: '1d' } 
             );
             
-            res.json({
-                message: "login successfully",
-                token: token,
-                type: user.role
-            });
+            res.json({ message: "login successfully", token, type: user.role });
         } else {
             res.status(401).json({ message: "invalid password" });
         }
     }).catch((error) => {
-        console.error("Login Error:", error);
         res.status(500).json({ message: "Internal server error" });
     });
 }
-// ==========================================
-// NEW CONTROLLER: Verify Email OTP
-// ==========================================
+
 export async function verifyEmail(req, res) {
     const { email, otp } = req.body;
-  
     try {
-      const user = await User.findOne({ email });
-      if (!user) return res.status(404).json({ message: "User not found" });
-  
-      if (user.otp !== otp) {
-        return res.status(400).json({ message: "Invalid OTP" });
-      }
-      if (user.otpExpires < Date.now()) {
-        return res.status(400).json({ message: "OTP has expired." });
-      }
-  
-      user.isVerified = true;
-      user.otp = null;
-      user.otpExpires = null;
-      await user.save();
-  
-      res.status(200).json({ message: "Email verified successfully" });
+        const user = await User.findOne({ email });
+        if (!user) return res.status(404).json({ message: "User not found" });
+        if (user.otp !== otp) return res.status(400).json({ message: "Invalid OTP" });
+        if (user.otpExpires < Date.now()) return res.status(400).json({ message: "OTP has expired." });
+
+        user.isVerified = true;
+        user.otp = null;
+        user.otpExpires = null;
+        await user.save();
+        res.status(200).json({ message: "Email verified successfully" });
     } catch (error) {
-      res.status(500).json({ message: "Server error", error: error.message });
+        res.status(500).json({ message: "Server error", error: error.message });
     }
 }
 
-// ==========================================
-// NEW CONTROLLER: Request Password Reset
-// ==========================================
 export async function forgotPassword(req, res) {
     const { email } = req.body;
     try {
@@ -158,39 +137,37 @@ export async function forgotPassword(req, res) {
         user.otpExpires = Date.now() + 10 * 60 * 1000;
         await user.save();
 
-        // ✅ Resend හරහා OTP යැවීම
-        await resend.emails.send({
-            from: 'onboarding@resend.dev',
+        // ✅ Gmail හරහා Password Reset OTP යැවීම
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
             to: user.email,
             subject: 'Password Reset OTP - Job Finder',
             html: `<p>Your OTP for password reset is: <strong>${otp}</strong>. Valid for 10 minutes.</p>`
-        });
+        };
 
+        await transporter.sendMail(mailOptions);
         res.status(200).json({ message: "OTP sent to email successfully" });
     } catch (error) {
-        console.error("❌ RESEND ERROR (Forgot Password):", error);
+        console.error("❌ NODEMAILER ERROR (Forgot Pw):", error);
         res.status(500).json({ message: "Failed to send reset OTP", error: error.message });
     }
 }
 
 export async function resetPassword(req, res) {
     const { email, otp, newPassword } = req.body;
-  
     try {
-      const user = await User.findOne({ email });
-      if (!user) return res.status(404).json({ message: "User not found" });
-  
-      if (user.otp !== otp) return res.status(400).json({ message: "Invalid OTP" });
-      if (user.otpExpires < Date.now()) return res.status(400).json({ message: "OTP has expired." });
-  
-      user.password = bcrypt.hashSync(newPassword, 10);
-      user.otp = null;
-      user.otpExpires = null;
-      await user.save();
-  
-      res.status(200).json({ message: "Password reset successfully" });
+        const user = await User.findOne({ email });
+        if (!user) return res.status(404).json({ message: "User not found" });
+        if (user.otp !== otp) return res.status(400).json({ message: "Invalid OTP" });
+        if (user.otpExpires < Date.now()) return res.status(400).json({ message: "OTP expired." });
+
+        user.password = bcrypt.hashSync(newPassword, 10);
+        user.otp = null;
+        user.otpExpires = null;
+        await user.save();
+        res.status(200).json({ message: "Password reset successfully" });
     } catch (error) {
-      res.status(500).json({ message: "Server error", error: error.message });
+        res.status(500).json({ message: "Server error", error: error.message });
     }
 }
 export async function updateUser(req, res) {
@@ -346,64 +323,51 @@ export async function toggleBlockUser(req, res) {
 
 export async function sendGroupEmail(req, res) {
     const { emails, subject, message } = req.body; 
-
-    if (!emails || emails.length === 0) {
-        return res.status(400).json({ message: "No email addresses provided" });
-    }
+    if (!emails || emails.length === 0) return res.status(400).json({ message: "No emails" });
 
     try {
-        // ✅ Resend හරහා Group Email යැවීම
-        await resend.emails.send({
-            from: 'onboarding@resend.dev',
-            to: emails, // Resend වලට Array එකක් කෙලින්ම ලබාදිය හැක
+        // ✅ Gmail හරහා Group Email යැවීම
+        const mailOptions = {
+            from: process.env.EMAIL_USER,
+            to: emails.join(','), // Nodemailer accepts comma separated strings
             subject: subject,
             text: message
-        });
+        };
+
+        await transporter.sendMail(mailOptions);
         
-        const newMessage = new Message({
-            recipients: emails,
-            subject: subject,
-            message: message
-        });
+        const newMessage = new Message({ recipients: emails, subject, message });
         await newMessage.save();
 
-        res.json({ message: "Emails sent and history saved successfully!" });
+        res.json({ message: "Group emails sent successfully!" });
     } catch (error) {
-        console.error("❌ RESEND GROUP EMAIL FAILED:", error);
+        console.error("❌ GROUP EMAIL FAILED:", error);
         res.status(500).json({ message: "Failed to send group emails", error: error.message });
     }
 }
 
-
 export async function getSentMessages(req, res) {
     try {
-    
         const history = await Message.find().sort({ date: -1 });
         res.status(200).json(history);
     } catch (error) {
-        res.status(500).json({ message: "Error fetching message history", error: error.message });
+        res.status(500).json({ message: "Error", error: error.message });
     }
 }
 
-// 
 export async function getMessagesByEmail(req, res) {
     const { email } = req.params; 
-
     try {
-      
         const history = await Message.find({ recipients: email }).sort({ date: -1 });
         res.status(200).json(history);
     } catch (error) {
-        res.status(500).json({ message: "Error fetching user history", error: error.message });
+        res.status(500).json({ message: "Error", error: error.message });
     }
 }
 
 export function googleAuthCallback(req, res) {
     const user = req.user;
-
-    if (user.isBlocked) {
-        return res.redirect(`${process.env.FRONTEND_URL}/?error=blocked`);
-    }
+    if (user.isBlocked) return res.redirect(`${process.env.FRONTEND_URL}/?error=blocked`);
 
     const token = jwt.sign({
         email: user.email,
@@ -412,9 +376,7 @@ export function googleAuthCallback(req, res) {
         lastName: user.lastName,
         role: user.role,
         img: user.img
-    }, process.env.JWT_KEY,
-    { expiresIn: '1d' }
-    );  
+    }, process.env.JWT_KEY, { expiresIn: '1d' });  
 
     res.redirect(`${process.env.FRONTEND_URL}/?token=${token}&type=${user.role}`);
 }
