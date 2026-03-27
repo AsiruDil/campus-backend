@@ -20,55 +20,65 @@ const transporter = nodemailer.createTransport({
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
 export async function createUser(req, res) {
-    if (req.body.role === "admin" || req.body.role === "madam") {
-        if (!req.user || req.user.role !== "admin") {
-            return res.status(403).json({ message: "Only admin can create privileged roles" });
-        }
-    }
+    console.log("Registration request received for:", req.body.email);
 
     try {
         const findName = await User.findOne({ userName: req.body.userName });
         const findEmail = await User.findOne({ email: req.body.email });
 
-        if (findName) return res.status(403).json({ message: "UserName already exists" });
-        if (findEmail) return res.status(403).json({ message: "Email already exists" });
+        // 🛑 Check if user already exists
+        if (findName) {
+            console.log("❌ 403: Username exists");
+            return res.status(403).json({ message: "UserName already exists" });
+        }
+        if (findEmail) {
+            console.log("❌ 403: Email exists");
+            return res.status(403).json({ message: "Email already exists" });
+        }
+
+        // 🛑 Role Security Check
+        const requestedRole = req.body.role || "user";
+        if (requestedRole === "admin" || requestedRole === "madam") {
+            // මේ වගේ role එකක් හදන්න පුළුවන් දැනටමත් ලොග් වෙලා ඉන්න Admin කෙනෙකුට විතරයි
+            if (!req.user || req.user.role !== "admin") {
+                console.log("❌ 403: Unauthorized role creation attempt");
+                return res.status(403).json({ message: "Only admin can create privileged roles" });
+            }
+        }
 
         const hashedPassword = bcrypt.hashSync(req.body.password, 10);
         const otp = generateOTP();
-        const otpExpires = Date.now() + 10 * 60 * 1000;
+        const otpExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
 
         const user = new User({
-            email: req.body.email,
-            userName: req.body.userName,
             firstName: req.body.firstName,
             lastName: req.body.lastName,
+            userName: req.body.userName,
+            email: req.body.email,
             password: hashedPassword,
-            role: req.body.role || "user",
+            role: requestedRole,
             otp: otp,
             otpExpires: otpExpires
         });
 
         await user.save();
+        console.log("✅ User saved to DB. Sending OTP email...");
 
-        // ✅ Gmail හරහා OTP යැවීම
+        // Send OTP Email
         const mailOptions = {
             from: process.env.EMAIL_USER,
             to: req.body.email,
             subject: 'Verify Your Account - Job Finder',
-            html: `<p>Welcome to Job Finder! Your verification OTP is: <strong>${otp}</strong>. It will expire in 10 minutes.</p>`
+            html: `<h3>Welcome to Job Finder!</h3>
+                   <p>Your verification OTP is: <strong>${otp}</strong></p>
+                   <p>This code will expire in 10 minutes.</p>`
         };
 
-        try {
-            await transporter.sendMail(mailOptions);
-            console.log("✅ OTP sent successfully via Gmail to:", req.body.email);
-            res.json({ message: "User created successfully. Please check your email for the OTP." });
-        } catch (emailErr) {
-            console.error("❌ NODEMAILER ERROR:", emailErr);
-            res.status(500).json({ message: "User created, but failed to send OTP email.", error: emailErr.message });
-        }
+        await transporter.sendMail(mailOptions);
+        res.json({ message: "User created successfully. Please check your email for the OTP." });
 
     } catch (err) {
-        console.error("❌ CRITICAL REGISTRATION ERROR:", err);
+        console.error("❌ REGISTRATION ERROR:", err);
         res.status(500).json({ message: "Registration failed", error: err.message });
     }
 }
