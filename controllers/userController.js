@@ -10,78 +10,62 @@ dotenv.config()
 // Helper function to generate a 6-digit OTP
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
-export async function createUser(req,res){
-
-    // ✅ FIXED: only admin can create admin
-    if(req.body.role === "admin"){
-        if(!req.user || req.user.role !== "admin"){
-            return res.status(403).json({
-                message:"Only admin can create admin"
-            })
+export async function createUser(req, res) {
+    // Admin checks
+    if (req.body.role === "admin" || req.body.role === "madam") {
+        if (!req.user || req.user.role !== "admin") {
+            return res.status(403).json({ message: "Only admin can create privileged roles" });
         }
     }
 
-    // ✅ FIXED: only admin can create moderator (madam)
-    if(req.body.role === "madam"){
-        if(!req.user || req.user.role !== "admin"){
-            return res.status(403).json({
-                message:"Only admin can create moderator"
-            })
-        }
-    }
+    try {
+        const findName = await User.findOne({ userName: req.body.userName });
+        const findEmail = await User.findOne({ email: req.body.email });
 
-    try{    
-        const findName = await User.findOne({userName:req.body.userName})
-        const findEmail = await User.findOne({email:req.body.email})
+        if (findName) return res.status(403).json({ message: "UserName already exists" });
+        if (findEmail) return res.status(403).json({ message: "Email already exists" });
 
-        if(findName!=null){
-            return res.status(403).json({ message:"UserName already exists" })
-        }
-        else if(findEmail!=null){
-             return res.status(403).json({ message:"Email already exists" })
-        }
-
-        const hashedPassword=bcrypt.hashSync(req.body.password,10)
-        
-        // --- NEW: Generate OTP and Expiration ---
+        const hashedPassword = bcrypt.hashSync(req.body.password, 10);
         const otp = generateOTP();
-        const otpExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
+        const otpExpires = Date.now() + 10 * 60 * 1000;
 
         const user = new User({
-            email:req.body.email,
-            userName:req.body.userName,
+            email: req.body.email,
+            userName: req.body.userName,
             firstName: req.body.firstName,
-            lastName :req.body.lastName,
-            password:hashedPassword,
-            role:req.body.role,
-            otp: otp, // Save OTP
-            otpExpires: otpExpires // Save Expiration
-        })
+            lastName: req.body.lastName,
+            password: hashedPassword,
+            role: req.body.role || "user",
+            otp: otp,
+            otpExpires: otpExpires
+        });
 
-        await user.save()
+        await user.save();
 
-        // --- NEW: Send Verification Email ---
+        // ✅ Nodemailer Transport (Better for Cloud Servers)
         const transporter = nodemailer.createTransport({
-            service: 'gmail',
+            host: 'smtp.gmail.com',
+            port: 465,
+            secure: true, // SSL
             auth: {
-                user: process.env.EMAIL_USER, 
-                pass: process.env.EMAIL_PASS 
+                user: process.env.EMAIL_USER,
+                pass: process.env.EMAIL_PASS // ⚠️ Must be Google App Password
             }
         });
 
         const mailOptions = {
-            from: process.env.EMAIL_USER,
+            from: `"Job Finder" <${process.env.EMAIL_USER}>`,
             to: req.body.email,
             subject: "Verify Your Account - Job Finder",
-            text: `Welcome to Job Finder! Your verification OTP is: ${otp}. It will expire in 10 minutes.`
+            text: `Your verification OTP is: ${otp}. Valid for 10 minutes.`
         };
 
         await transporter.sendMail(mailOptions);
+        res.json({ message: "User created. Check your email for OTP." });
 
-        res.json({ message:"User created successfully. Please check your email for the OTP." })
-            
-    }catch(err){
-        res.status(500).json({ message:"failed to create user", error:err })
+    } catch (err) {
+        console.error("CRITICAL REGISTRATION ERROR:", err); // ✅ Render Logs වල ලෙඩේ බලාගන්න
+        res.status(500).json({ message: "Registration failed", error: err.message });
     }
 }
 

@@ -7,51 +7,56 @@ import jwt from "jsonwebtoken";
 import userRouter from "./routes/userRoute.js";
 import jobVacancyRouter from "./routes/jobVacancyRouter.js";
 import applyRouter from "./routes/applyRouter.js";
-import User from "./models/user.js";
 
 dotenv.config();
-const app=express()
-app.set("trust proxy", 1);
-app.use(cors())
-app.use(bodyParser.json())
+const app = express();
 
+// ✅ Render Proxy Fix
+app.set("trust proxy", 1);
+
+// ✅ CORS Configuration
+app.use(cors({
+    origin: process.env.FRONTEND_URL || "*",
+    credentials: true
+}));
+
+app.use(bodyParser.json());
+
+// ✅ Token Middleware (FIXED: Won't block Public Routes)
 app.use((req, res, next) => {
     const tokenString = req.header("Authorization");
-    
-    if (tokenString != null) {
+
+    if (tokenString && tokenString.startsWith("Bearer ")) {
         const token = tokenString.replace("Bearer ", "");
-        
+
         jwt.verify(token, process.env.JWT_KEY, (err, decoded) => {
             if (err) {
-                // If the token is expired, tampered with, or invalid
-                console.log(`Token Error: ${err.message}`); // This gives you better debugging info!
-                
-                // Send a 401 Unauthorized status back to the React app
-                return res.status(401).json({
-                    message: "Session expired or invalid token"
-                });
-            } else { 
-                // Token is good! Attach user data and continue
+                // Token එක වැරදි වුණත් request එක block කරන්නේ නැහැ, 
+                // ඒත් req.user එකට data වැටෙන්නේ නැහැ.
+                console.log(`Token Info: ${err.message}`); 
+                next();
+            } else {
                 req.user = decoded;
                 next();
             }
         });
     } else {
-        // No token provided (for public routes like login/register)
-        next(); 
-    } 
+        next();
+    }
 });
 
-mongoose.connect(process.env.MONGODB_URL).then(()=>{
-    console.log('connect to the database')
-}).catch(()=>{
-    console.log('database connection failed')
-})
+// ✅ Routes
+app.use("/api/users", userRouter);
+app.use('/api/jobs', jobVacancyRouter);
+app.use('/api/apply', applyRouter);
 
-app.use("/api/users",userRouter)
-app.use('/api/jobs',jobVacancyRouter);
-app.use('/api/apply',applyRouter)
+// ✅ Database Connection
+mongoose.connect(process.env.MONGODB_URL)
+    .then(() => console.log('Connected to the database'))
+    .catch((err) => console.log('Database connection failed:', err));
 
-app.listen(3000,()=>{
-    console.log('server is running on port 3000')
-})   
+// ✅ Port Binding (FIXED for Render)
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+});
