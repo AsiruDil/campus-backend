@@ -11,12 +11,14 @@ import applyRouter from "./routes/applyRouter.js";
 dotenv.config();
 const app = express();
 
-// ✅ 1. Render Proxy Fix
+// ✅ 1. Render/Proxy Fix (Google Auth සඳහා අනිවාර්යයි)
 app.set("trust proxy", 1);
 
 // ✅ 2. CORS Configuration
+// ⚠️ මෙතන Vercel URL එක ඔයාගේ සැබෑ ලින්ක් එකටම සමානදැයි බලන්න (Spelling check)
 const allowedOrigins = [
-  "https://university-job-finder.vercel.app",
+  "https://university-job-finder.vercel.app", // මෙතන spelling බලන්න
+  "https://univerty-job-finder.vercel.app",   // ඔයා කලින් එවපු spelling එකත් මම ඇතුළත් කළා
   "http://localhost:5173"
 ];
 
@@ -24,22 +26,23 @@ const corsOptions = {
     origin: function (origin, callback) {
         // allow requests with no origin (like mobile apps or curl requests)
         if (!origin) return callback(null, true);
-        if (allowedOrigins.indexOf(origin) === -1) {
-            return callback(new Error('CORS policy violation'), false);
+        if (allowedOrigins.indexOf(origin) !== -1 || !origin) {
+            callback(null, true);
+        } else {
+            callback(new Error('CORS policy violation'));
         }
-        return callback(null, true);
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"]
 };
 
-// ✅ මෙම පේළිය පමණක් ප්‍රමාණවත් (Options එක ඉවත් කළා)
+// Middleware පිළිවෙල ඉතා වැදගත්!
 app.use(cors(corsOptions));
-
 app.use(bodyParser.json());
+app.use(express.json()); // අමතර ආරක්ෂාවට
 
-// ✅ 3. Token Middleware
+// ✅ 3. Token Verification Middleware
 app.use((req, res, next) => {
     const tokenString = req.header("Authorization");
 
@@ -48,7 +51,9 @@ app.use((req, res, next) => {
 
         jwt.verify(token, process.env.JWT_KEY, (err, decoded) => {
             if (err) {
-                console.log(`Token Verification Info: ${err.message}`);
+                // Token එකේ ප්‍රශ්නයක් තිබුණත් request එක ඉදිරියට යවනවා 
+                // (Controller එකේදී req.user නැත්නම් 401 දිය හැක)
+                console.log(`Token Info: ${err.message}`);
                 next();
             } else {
                 req.user = decoded;
@@ -65,15 +70,15 @@ app.use("/api/users", userRouter);
 app.use('/api/jobs', jobVacancyRouter);
 app.use('/api/apply', applyRouter);
 
-// Home route to check if server is alive
-app.get("/", (req, res) => res.send("Backend is Live! 🚀"));
+// Server එක වැඩදැයි බලන්න Home route එකක්
+app.get("/", (req, res) => res.send("Backend is Live and Running! 🚀"));
 
 // ✅ 5. Database Connection
 mongoose.connect(process.env.MONGODB_URL)
     .then(() => console.log('✅ Connected to the database'))
     .catch((err) => console.error('❌ Database connection failed:', err));
 
-// ✅ 6. Port Binding
+// ✅ 6. Port Binding (Render විසින් PORT එක ලබා දෙයි)
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`🚀 Server is running on port ${PORT}`);
