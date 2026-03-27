@@ -4,27 +4,16 @@ import jwt from "jsonwebtoken";
 import dotenv from 'dotenv';
 import nodemailer from 'nodemailer';
 import Message from "../models/message.js";
+import { Resend } from 'resend';
 
 dotenv.config()
+
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // Helper function to generate a 6-digit OTP
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
-// ✅ Render/Cloud servers සඳහා වඩාත් ගැලපෙන Transporter එක
-const transporter = nodemailer.createTransport({
-    host: 'smtp.gmail.com',
-    port: 587,
-    secure: false, // 587 සඳහා මෙය false විය යුතුයි
-    auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS 
-    },
-    tls: {
-        rejectUnauthorized: false // Cloud server එකේ ආරක්ෂක බාධක මගහැරීමට
-    }
-});
 export async function createUser(req, res) {
-    // Admin checks
     if (req.body.role === "admin" || req.body.role === "madam") {
         if (!req.user || req.user.role !== "admin") {
             return res.status(403).json({ message: "Only admin can create privileged roles" });
@@ -52,24 +41,21 @@ export async function createUser(req, res) {
             otp: otp,
             otpExpires: otpExpires
         });
- 
+
         await user.save();
 
-        // ✅ 2. Email එක යැවීමේ කොටස
-        const mailOptions = {
-            from: `"Job Finder" <${process.env.EMAIL_USER}>`,
-            to: req.body.email,
-            subject: "Verify Your Account - Job Finder",
-            text: `Welcome to Job Finder! Your verification OTP is: ${otp}. It will expire in 10 minutes.`
-        };
-
+        // ✅ 2. Email එක යැවීම (Resend හරහා)
         try {
-            await transporter.sendMail(mailOptions);
-            console.log("✅ Registration OTP sent successfully to:", req.body.email);
+            await resend.emails.send({
+                from: 'onboarding@resend.dev', // ⚠️ මුලින්ම මෙය භාවිතා කරන්න
+                to: req.body.email,
+                subject: 'Verify Your Account - Job Finder',
+                html: `<p>Welcome to Job Finder! Your verification OTP is: <strong>${otp}</strong>. It will expire in 10 minutes.</p>`
+            });
+            console.log("✅ Registration OTP sent successfully via Resend to:", req.body.email);
             res.json({ message: "User created successfully. Please check your email for the OTP." });
         } catch (emailErr) {
-            console.error("❌ NODEMAILER ERROR (Registration):", emailErr);
-            // User සේව් වුණත් email එක අසාර්ථක වුවහොත් පණිවිඩය වෙනස් කරයි
+            console.error("❌ RESEND ERROR:", emailErr);
             res.status(500).json({ message: "User created, but failed to send OTP email.", error: emailErr.message });
         }
 
@@ -78,7 +64,6 @@ export async function createUser(req, res) {
         res.status(500).json({ message: "Registration failed", error: err.message });
     }
 }
-
 export function loginUser(req, res) {
     const email = req.body.email;
     const password = req.body.password;
@@ -164,29 +149,27 @@ export async function verifyEmail(req, res) {
 // ==========================================
 export async function forgotPassword(req, res) {
     const { email } = req.body;
-  
     try {
-      const user = await User.findOne({ email });
-      if (!user) return res.status(404).json({ message: "User not found" });
-  
-      const otp = generateOTP();
-      user.otp = otp;
-      user.otpExpires = Date.now() + 10 * 60 * 1000;
-      await user.save();
-  
-      const mailOptions = {
-        from: `"Job Finder" <${process.env.EMAIL_USER}>`,
-        to: user.email,
-        subject: "Password Reset OTP - Job Finder",
-        text: `Your OTP for password reset is: ${otp}. It is valid for 10 minutes.`
-      };
-  
-      await transporter.sendMail(mailOptions);
-      console.log("✅ Forgot Password OTP sent to:", user.email);
-      res.status(200).json({ message: "OTP sent to email successfully" });
+        const user = await User.findOne({ email });
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        const otp = generateOTP();
+        user.otp = otp;
+        user.otpExpires = Date.now() + 10 * 60 * 1000;
+        await user.save();
+
+        // ✅ Resend හරහා OTP යැවීම
+        await resend.emails.send({
+            from: 'onboarding@resend.dev',
+            to: user.email,
+            subject: 'Password Reset OTP - Job Finder',
+            html: `<p>Your OTP for password reset is: <strong>${otp}</strong>. Valid for 10 minutes.</p>`
+        });
+
+        res.status(200).json({ message: "OTP sent to email successfully" });
     } catch (error) {
-      console.error("❌ NODEMAILER ERROR (Forgot Password):", error);
-      res.status(500).json({ message: "Failed to send reset OTP", error: error.message });
+        console.error("❌ RESEND ERROR (Forgot Password):", error);
+        res.status(500).json({ message: "Failed to send reset OTP", error: error.message });
     }
 }
 
@@ -369,14 +352,13 @@ export async function sendGroupEmail(req, res) {
     }
 
     try {
-        const mailOptions = {
-            from: `"Job Finder Admin" <${process.env.EMAIL_USER}>`,
-            bcc: emails.join(','),
+        // ✅ Resend හරහා Group Email යැවීම
+        await resend.emails.send({
+            from: 'onboarding@resend.dev',
+            to: emails, // Resend වලට Array එකක් කෙලින්ම ලබාදිය හැක
             subject: subject,
             text: message
-        };
-
-        await transporter.sendMail(mailOptions);
+        });
         
         const newMessage = new Message({
             recipients: emails,
@@ -386,9 +368,8 @@ export async function sendGroupEmail(req, res) {
         await newMessage.save();
 
         res.json({ message: "Emails sent and history saved successfully!" });
-
     } catch (error) {
-        console.error("❌ GROUP EMAIL FAILED:", error);
+        console.error("❌ RESEND GROUP EMAIL FAILED:", error);
         res.status(500).json({ message: "Failed to send group emails", error: error.message });
     }
 }
