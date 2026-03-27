@@ -85,57 +85,66 @@ export async function createUser(req,res){
     }
 }
 
-export function loginUser(req,res){
-    const email=req.body.email
-    const password=req.body.password
-    const userName=req.body.userName
+export function loginUser(req, res) {
+    const email = req.body.email;
+    const password = req.body.password;
+    const userName = req.body.userName;
 
     User.findOne({
-        $or:[
-            {email:email},
-            {userName:userName}
+        $or: [
+            { email: email },
+            { userName: userName }
         ]
-    }).then((user)=>{
-            if(user==null){
-                res.status(404).json({ message:"User not found" })
-                return
-            }
-            
-            // ✅ NEW: Prevent login if the account is blocked
-            if(user.isBlocked){
-                res.status(403).json({ message:"Your account has been blocked. Please contact support." })
-                return
-            }
+    }).then((user) => {
+        if (user == null) {
+            res.status(404).json({ message: "User not found" });
+            return;
+        }
+        
+        // ✅ Prevent login if the account is blocked
+        if (user.isBlocked) {
+            res.status(403).json({ message: "Your account has been blocked. Please contact support." });
+            return;
+        }
 
-            // --- NEW: Prevent login if email is not verified ---
-            if(!user.isVerified){
-                res.status(403).json({ message:"Please verify your email address before logging in." })
-                return
-            }
+        // ✅ Prevent login if email is not verified
+        if (!user.isVerified) {
+            res.status(403).json({ message: "Please verify your email address before logging in." });
+            return;
+        }
 
-            const isPasswordCorrect=bcrypt.compareSync(password,user.password)
-            if(isPasswordCorrect){
-                const token = jwt.sign({
-                    email:user.email,
-                    userName:user.userName,
-                    firstName:user.firstName,
-                    lastName:user.lastName,
-                    role:user.role,
-                    img:user.img
+        // Check password
+        const isPasswordCorrect = bcrypt.compareSync(password, user.password);
+        
+        if (isPasswordCorrect) {
+            // Generate Token
+            const token = jwt.sign(
+                {
+                    email: user.email,
+                    userName: user.userName,
+                    firstName: user.firstName,
+                    lastName: user.lastName,
+                    role: user.role,
+                    img: user.img
                 },
-                  process.env.JWT_KEY
-            )
-              res.json({
-                message:"login successfully",
-                token:token,
-                type:user.role
-              })
-            }else{
-                res.status(401).json({ message:"invalid password" })
-            }
-    })
+                process.env.JWT_KEY,
+                { expiresIn: '1d' } 
+            );
+            
+            res.json({
+                message: "login successfully",
+                token: token,
+                type: user.role
+            });
+        } else {
+            res.status(401).json({ message: "invalid password" });
+        }
+    }).catch((error) => {
+        // ✅ Added error handling so your server doesn't crash on DB issues
+        console.error("Login Error:", error);
+        res.status(500).json({ message: "Internal server error" });
+    });
 }
-
 
 // ==========================================
 // NEW CONTROLLER: Verify Email OTP
@@ -384,7 +393,6 @@ export async function toggleBlockUser(req, res) {
 
 
 
-// 1. Email යවන සහ Save කරන Function එක
 export async function sendGroupEmail(req, res) {
     const { emails, subject, message } = req.body; 
 
@@ -409,11 +417,9 @@ export async function sendGroupEmail(req, res) {
             text: message
         };
 
-        // Email එක යැවීම
         await transporter.sendMail(mailOptions);
         
-        // --- Database එකේ Save කිරීම ---
-        // Email එක සාර්ථකව ගියොත් පමණක් DB එකට දත්ත ඇතුලත් වේ
+      
         const newMessage = new Message({
             recipients: emails,
             subject: subject,
@@ -470,7 +476,9 @@ export function googleAuthCallback(req, res) {
         lastName: user.lastName,
         role: user.role,
         img: user.img
-    }, process.env.JWT_KEY);
+    }, process.env.JWT_KEY,
+    { expiresIn: '1d' }
+);  
 
     // Redirect back to frontend with the token and user type
     res.redirect(`${process.env.FRONTEND_URL}/?token=${token}&type=${user.role}`);

@@ -4,43 +4,59 @@ import { isAdmin } from "./userController.js"
 
 export async function createJob(req, res) {
     try {
-        let jobId = "JOB00001";
-
+        // Find the job with the highest jobId string
         const lastJob = await JobVacancy
             .findOne()
-            .sort({ jobId: -1 });
+            .sort({ jobId: -1 })
+            .select('jobId'); 
 
-        if (lastJob) {
-            const lastNumber = parseInt(lastJob.jobId.replace("JOB", ""));
-            jobId = "JOB" + (lastNumber + 1).toString().padStart(5, "0");
+        // Start at 0 if the database is empty
+        let nextJobId = "JOB00000";
+
+        if (lastJob && lastJob.jobId) {
+            // Extract the number and increment it
+            const lastNumber = parseInt(lastJob.jobId.replace("JOB", ""), 10);
+            if (!isNaN(lastNumber)) {
+                nextJobId = `JOB${String(lastNumber + 1).padStart(5, "0")}`;
+            }
         }
 
         const jobVacancy = new JobVacancy({
-            jobId,
+            jobId: nextJobId,
             jobRole: req.body.jobRole,
             location: req.body.location,
             faculty: req.body.faculty,
             department: req.body.department,
             jobDescription: req.body.jobDescription,
             jobResponsibilities: req.body.jobResponsibilities,
-            postDate: req.body.postDate,
+            postDate: req.body.postDate || new Date(),
             deadline: req.body.deadline,
             jobType: req.body.jobType,
             salary: req.body.salary
         });
 
-        await jobVacancy.save();
+        const savedJob = await jobVacancy.save();
 
-        res.status(201).json({ message: "Job Vacancy Created Successfully" });
+        res.status(201).json({ 
+            message: "Job Vacancy Created Successfully",
+            data: savedJob 
+        });
 
     } catch (err) {
+        console.error("Database Save Error:", err);
+
+        if (err.code === 11000) {
+            return res.status(400).json({
+                message: "Duplicate Error: A job with this ID already exists."
+            });
+        }
+
         res.status(500).json({
-            message: "Failed to save. Ensure Job ID is unique.",
-            error: err
+            message: "Internal Server Error",
+            error: err.message 
         });
     }
 }
-
 export async function getAllJobs(req, res) {
 
 

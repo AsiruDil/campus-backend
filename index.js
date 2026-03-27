@@ -14,27 +14,32 @@ const app=express()
 app.use(cors())
 app.use(bodyParser.json())
 
-app.use((req,res,next)=>{
-    const tokenString=req.header("Authorization")
-    if(tokenString!=null){
-        const token = tokenString.replace("Bearer ","")
-        jwt.verify(token,process.env.JWT_KEY,
-            (err,decoded)=>{
-                if(decoded != null){
-                    req.user=decoded
-                    next()
-                }else{
-                    console.log("invalid token")
-                    res.status(403).json({
-                        message:"invalid token"
-                    })
-                }
+app.use((req, res, next) => {
+    const tokenString = req.header("Authorization");
+    
+    if (tokenString != null) {
+        const token = tokenString.replace("Bearer ", "");
+        
+        jwt.verify(token, process.env.JWT_KEY, (err, decoded) => {
+            if (err) {
+                // If the token is expired, tampered with, or invalid
+                console.log(`Token Error: ${err.message}`); // This gives you better debugging info!
+                
+                // Send a 401 Unauthorized status back to the React app
+                return res.status(401).json({
+                    message: "Session expired or invalid token"
+                });
+            } else {
+                // Token is good! Attach user data and continue
+                req.user = decoded;
+                next();
             }
-        )
-    }else{
+        });
+    } else {
+        // No token provided (for public routes like login/register)
         next(); 
     } 
-})
+});
 
 mongoose.connect(process.env.MONGODB_URL).then(()=>{
     console.log('connect to the database')
