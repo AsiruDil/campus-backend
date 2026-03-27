@@ -13,18 +13,15 @@ const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString()
 // ✅ Render/Cloud servers සඳහා වඩාත් ගැලපෙන Transporter එක
 const transporter = nodemailer.createTransport({
     host: 'smtp.gmail.com',
-    port: 587, // 465 වෙනුවට 587 පාවිච්චි කරමු
-    secure: false, // Port 587 සඳහා මෙය false විය යුතුයි
+    port: 587,
+    secure: false, // 587 සඳහා මෙය false විය යුතුයි
     auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS 
     },
     tls: {
-        rejectUnauthorized: false // Security blocks මගහැරීමට
-    },
-    connectionTimeout: 10000, // සම්බන්ධ වීමට තත්පර 10ක් ලබා දෙයි
-    greetingTimeout: 10000,
-    socketTimeout: 10000
+        rejectUnauthorized: false // Cloud server එකේ ආරක්ෂක බාධක මගහැරීමට
+    }
 });
 export async function createUser(req, res) {
     // Admin checks
@@ -55,7 +52,7 @@ export async function createUser(req, res) {
             otp: otp,
             otpExpires: otpExpires
         });
-
+ 
         await user.save();
 
         // ✅ 2. Email එක යැවීමේ කොටස
