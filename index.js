@@ -11,18 +11,35 @@ import applyRouter from "./routes/applyRouter.js";
 dotenv.config();
 const app = express();
 
-// ✅ Render Proxy Fix
+// ✅ 1. Render Proxy Fix
 app.set("trust proxy", 1);
 
-// ✅ CORS Configuration
-app.use(cors({
-    origin: process.env.FRONTEND_URL || "*",
-    credentials: true
-}));
+// ✅ 2. CORS Configuration
+const allowedOrigins = [
+  "https://university-job-finder.vercel.app",
+  "http://localhost:5173"
+];
+
+const corsOptions = {
+    origin: function (origin, callback) {
+        // allow requests with no origin (like mobile apps or curl requests)
+        if (!origin) return callback(null, true);
+        if (allowedOrigins.indexOf(origin) === -1) {
+            return callback(new Error('CORS policy violation'), false);
+        }
+        return callback(null, true);
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"]
+};
+
+// ✅ මෙම පේළිය පමණක් ප්‍රමාණවත් (Options එක ඉවත් කළා)
+app.use(cors(corsOptions));
 
 app.use(bodyParser.json());
 
-// ✅ Token Middleware (FIXED: Won't block Public Routes)
+// ✅ 3. Token Middleware
 app.use((req, res, next) => {
     const tokenString = req.header("Authorization");
 
@@ -31,9 +48,7 @@ app.use((req, res, next) => {
 
         jwt.verify(token, process.env.JWT_KEY, (err, decoded) => {
             if (err) {
-                // Token එක වැරදි වුණත් request එක block කරන්නේ නැහැ, 
-                // ඒත් req.user එකට data වැටෙන්නේ නැහැ.
-                console.log(`Token Info: ${err.message}`); 
+                console.log(`Token Verification Info: ${err.message}`);
                 next();
             } else {
                 req.user = decoded;
@@ -45,18 +60,21 @@ app.use((req, res, next) => {
     }
 });
 
-// ✅ Routes
+// ✅ 4. API Routes
 app.use("/api/users", userRouter);
 app.use('/api/jobs', jobVacancyRouter);
 app.use('/api/apply', applyRouter);
 
-// ✅ Database Connection
-mongoose.connect(process.env.MONGODB_URL)
-    .then(() => console.log('Connected to the database'))
-    .catch((err) => console.log('Database connection failed:', err));
+// Home route to check if server is alive
+app.get("/", (req, res) => res.send("Backend is Live! 🚀"));
 
-// ✅ Port Binding (FIXED for Render)
+// ✅ 5. Database Connection
+mongoose.connect(process.env.MONGODB_URL)
+    .then(() => console.log('✅ Connected to the database'))
+    .catch((err) => console.error('❌ Database connection failed:', err));
+
+// ✅ 6. Port Binding
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Server is running on port ${PORT}`);
+    console.log(`🚀 Server is running on port ${PORT}`);
 });
