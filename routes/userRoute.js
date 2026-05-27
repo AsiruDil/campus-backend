@@ -1,39 +1,39 @@
 import express from "express";
-// Import your new passport config
-import "../util/passport.js"; // Adjust the path to where you saved passport.js
+import "../util/passport.js";
 import passport from "passport";
 
 import { 
     createUser, getAllUsers, getMessagesByEmail, getUser, 
     loginUser, sendGroupEmail, toggleBlockUser, updateUser,
     verifyEmail, forgotPassword, resetPassword, 
-    googleAuthCallback // <-- Import the new controller
+    googleAuthCallback
 } from "../controllers/userController.js";
 
 const userRouter = express.Router();
 
-// --- NEW GOOGLE ROUTES ---
-// 1. Route that triggers the Google popup
-userRouter.get("/auth/google", passport.authenticate("google", { scope: ["profile", "email"] }));
-
-// 2. Route Google redirects to after the user signs in
-userRouter.get(
-    "/auth/google/callback", 
-    passport.authenticate("google", { session: false }), 
-    googleAuthCallback
-);
-
-// --- EXISTING ROUTES ---
+// --- STATIC ROUTES FIRST ---
 userRouter.post("/verify-email", verifyEmail);
 userRouter.post("/forgot-password", forgotPassword);
 userRouter.post("/reset-password", resetPassword);
-userRouter.post("/", createUser);
 userRouter.post("/login", loginUser);
+userRouter.post("/", createUser);
+userRouter.get("/", getAllUsers);
+userRouter.post("/send-email", sendGroupEmail);
+
+// --- GOOGLE AUTH ROUTES ---
+userRouter.get("/auth/google", passport.authenticate("google", { scope: ["profile", "email"] }));
+userRouter.get(
+    "/auth/google/callback",
+    passport.authenticate("google", { session: false }),
+    googleAuthCallback
+);
+
+// --- PREFIXED DYNAMIC-LIKE ROUTES (before /:userName) ---
+userRouter.get("/history/:email", getMessagesByEmail);
+userRouter.put("/toggle-block/:userName", toggleBlockUser);
+
+// --- DYNAMIC ROUTES LAST ---
 userRouter.put("/:userName", updateUser);
 userRouter.get("/:userName", getUser);
-userRouter.get("/", getAllUsers);
-userRouter.put("/toggle-block/:userName", toggleBlockUser);
-userRouter.post('/send-email', sendGroupEmail);
-userRouter.get('/history/:email', getMessagesByEmail);
 
 export default userRouter;
