@@ -13,6 +13,7 @@ const transporter = nodemailer.createTransport({
     auth: {
         user: process.env.EMAIL_USER, 
         pass: process.env.EMAIL_PASS //
+        pass: process.env.EMAIL_PASS // 
     }
 });
 
@@ -42,6 +43,7 @@ export async function createUser(req, res) {
         const requestedRole = req.body.role || "user";
         if (requestedRole === "admin" || requestedRole === "madam") {
            
+          
             if (!req.user || req.user.role !== "admin") {
                 console.log("❌ 403: Unauthorized role creation attempt");
                 return res.status(403).json({ message: "Only admin can create privileged roles" });
