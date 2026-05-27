@@ -4,7 +4,7 @@ import jwt from "jsonwebtoken";
 import dotenv from 'dotenv';
 import nodemailer from 'nodemailer';
 import Message from "../models/message.js";
-import { Resend } from 'resend';
+
 
 dotenv.config()
 
@@ -12,7 +12,7 @@ const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
         user: process.env.EMAIL_USER, 
-        pass: process.env.EMAIL_PASS // ⚠️ මෙතනට අනිවාර්යයෙන්ම App Password එක දෙන්න
+        pass: process.env.EMAIL_PASS //
     }
 });
 
@@ -20,6 +20,8 @@ const transporter = nodemailer.createTransport({
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
 export async function createUser(req, res) {
+    console.log("EMAIL_USER:", process.env.EMAIL_USER);
+    console.log("EMAIL_PASS length:", process.env.EMAIL_PASS?.length);
     console.log("Registration request received for:", req.body.email);
 
     try {
@@ -39,7 +41,7 @@ export async function createUser(req, res) {
         // 🛑 Role Security Check
         const requestedRole = req.body.role || "user";
         if (requestedRole === "admin" || requestedRole === "madam") {
-            // මේ වගේ role එකක් හදන්න පුළුවන් දැනටමත් ලොග් වෙලා ඉන්න Admin කෙනෙකුට විතරයි
+           
             if (!req.user || req.user.role !== "admin") {
                 console.log("❌ 403: Unauthorized role creation attempt");
                 return res.status(403).json({ message: "Only admin can create privileged roles" });
@@ -147,7 +149,7 @@ export async function forgotPassword(req, res) {
         user.otpExpires = Date.now() + 10 * 60 * 1000;
         await user.save();
 
-        // ✅ Gmail හරහා Password Reset OTP යැවීම
+        
         const mailOptions = {
             from: process.env.EMAIL_USER,
             to: user.email,
@@ -336,10 +338,10 @@ export async function sendGroupEmail(req, res) {
     if (!emails || emails.length === 0) return res.status(400).json({ message: "No emails" });
 
     try {
-        // ✅ Gmail හරහා Group Email යැවීම
+        
         const mailOptions = {
             from: process.env.EMAIL_USER,
-            to: emails.join(','), // Nodemailer accepts comma separated strings
+            to: emails.join(','), 
             subject: subject,
             text: message
         };

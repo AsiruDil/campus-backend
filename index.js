@@ -8,11 +8,13 @@ import userRouter from "./routes/userRoute.js";
 import jobVacancyRouter from "./routes/jobVacancyRouter.js";
 import applyRouter from "./routes/applyRouter.js";
 import User from "./models/user.js";
+import passport from "passport";
 
 dotenv.config();
 const app=express()
 app.use(cors())
 app.use(bodyParser.json())
+app.use(passport.initialize());
 
 app.use((req,res,next)=>{
     const tokenString=req.header("Authorization")
