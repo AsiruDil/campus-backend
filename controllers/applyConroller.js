@@ -42,6 +42,7 @@ export async function saveApply(req, res) {
         lastName: user.lastName,
         email: user.email,
         cv: req.body.cv,
+        additionalDocuments: req.body.additionalDocuments,
         mobileNumber: req.body.mobileNumber
     });
     apply.save()
