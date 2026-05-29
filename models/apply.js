@@ -7,12 +7,10 @@ const applySchema = mongoose.Schema({
         type: String,
         required: true,
     },
-     jobRole: {
+    jobRole: {
         type: String,
         required: true,
     },
-
-
     userName: {
         type: String
     },
@@ -27,12 +25,10 @@ const applySchema = mongoose.Schema({
     email: {
         type: String,
         required: true,
-        
     },
     date: {
         type: Date,
         default: Date.now
-
     },
     isAvailable: {
         type: Boolean,
@@ -45,6 +41,10 @@ const applySchema = mongoose.Schema({
     cv: {
         type: String,
         required: true
+    },
+    additionalDocuments: {
+        type: String,
+        required: false
     }
   
 })
