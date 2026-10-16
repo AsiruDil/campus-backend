@@ -28,7 +28,7 @@ export async function createUser(req, res) {
         const findName = await User.findOne({ userName: req.body.userName });
         const findEmail = await User.findOne({ email: req.body.email });
 
-        // 🛑 Check if user already exists
+       
         if (findName) {
             console.log("❌ 403: Username exists");
             return res.status(403).json({ message: "UserName already exists" });
@@ -38,7 +38,7 @@ export async function createUser(req, res) {
             return res.status(403).json({ message: "Email already exists" });
         }
 
-        // 🛑 Role Security Check
+        
         const requestedRole = req.body.role || "user";
         if (requestedRole === "admin" || requestedRole === "madam") {
            
