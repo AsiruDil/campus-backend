@@ -8,6 +8,7 @@ const jobVacancySchema = new mongoose.Schema(
             unique: true,
             index: true
         },
+        category: { type: String, enum: ['lecturer', 'probationary', 'demo'] },
         jobRole: {
             type: String,
             required: true
@@ -59,7 +60,7 @@ const jobVacancySchema = new mongoose.Schema(
             type: Boolean,
             required: false,
             default: true
-        }        
+        }
     },
     {
         timestamps: true
