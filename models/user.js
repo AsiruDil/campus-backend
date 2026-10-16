@@ -39,6 +39,9 @@ const userSchema = mongoose.Schema({
         type: String,
         required: false,
     },
+    roleVersion: { type: Number, default: 2 },
+    faculty: { type: String, trim: true },
+    department: { type: String, trim: true },
     role: {
         type: String,
         required: true,
@@ -61,7 +64,7 @@ const userSchema = mongoose.Schema({
 
     isVerified: {
         type: Boolean,
-        default: false 
+        default: false
     },
     otp: {
         type: String,
@@ -73,7 +76,7 @@ const userSchema = mongoose.Schema({
         required: false,
         default: null
     }
-}); 
+});
 
 const User = mongoose.model("users", userSchema);
 export default User;

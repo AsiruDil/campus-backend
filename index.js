@@ -1,53 +1,19 @@
-import mongoose from "mongoose";
-import dotenv from "dotenv";
-import express from "express";
-import bodyParser from "body-parser";
-import cors from "cors";
-import jwt from "jsonwebtoken";
-import userRouter from "./routes/userRoute.js";
-import jobVacancyRouter from "./routes/jobVacancyRouter.js";
-import applyRouter from "./routes/applyRouter.js";
-import User from "./models/user.js";
-import passport from "passport";
+import 'dotenv/config';
+import mongoose from 'mongoose';
+import app from './app.js';
+import { migrateLegacyRoles } from './services/roleMigration.js';
 
-dotenv.config();
-const app=express()
-app.use(cors())
-app.use(bodyParser.json())
-app.use(passport.initialize());
-
-app.use((req,res,next)=>{
-    const tokenString=req.header("Authorization")
-    if(tokenString!=null){
-        const token = tokenString.replace("Bearer ","")
-        jwt.verify(token,process.env.JWT_KEY,
-            (err,decoded)=>{
-                if(decoded != null){
-                    req.user=decoded
-                    next()
-                }else{
-                    console.log("invalid token")
-                    res.status(403).json({
-                        message:"invalid token"
-                    })
-                }
-            }
-        )
-    }else{
-        next(); 
-    } 
-})
-
-mongoose.connect(process.env.MONGODB_URL).then(()=>{
-    console.log('connect to the database')
-}).catch(()=>{
-    console.log('database connection failed')
-})
-
-app.use("/api/users",userRouter)
-app.use('/api/jobs',jobVacancyRouter);
-app.use('/api/apply',applyRouter)
-
-app.listen(3000,()=>{
-    console.log('server is running on port 3000')
-})    
+if (!process.env.MONGODB_URL || !process.env.JWT_KEY) {
+  console.error('Set MONGODB_URL and JWT_KEY before starting the backend.');
+  process.exitCode = 1;
+} else {
+  try {
+    await mongoose.connect(process.env.MONGODB_URL);
+    await migrateLegacyRoles();
+    console.log('Connected to the database; role migration checked');
+    app.listen(Number(process.env.PORT || 3000), () => console.log(`Server is running on port ${process.env.PORT || 3000}`));
+  } catch {
+    console.error('Database connection failed. Check MONGODB_URL and database access.');
+    process.exitCode = 1;
+  }
+}

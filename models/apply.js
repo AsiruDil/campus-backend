@@ -3,6 +3,20 @@ import mongoose from "mongoose";
 
 const applySchema = mongoose.Schema({
 
+    nic: { type: String }, // Optional on historical records; required by submission validation.
+    category: { type: String, enum: ['lecturer', 'probationary', 'demo'] },
+    faculty: String,
+    department: String,
+    status: { type: String, enum: ['pending', 'shortlisted', 'selected', 'rejected', 'hold'], default: 'pending' },
+    archiveKey: String,
+    cvSize: Number,
+    supportingDocuments: [{ name: String, size: Number, archiveName: String }],
+    reviewedBy: String,
+    reviewedAt: Date,
+    reviewHistory: [{ status: String, by: String, date: Date }],
+    lastNotifiedAt: Date,
+    documentsDeletedAt: Date,
+    documentsDeletedBy: String,
     jobId: {
         type: String,
         required: true,
@@ -27,7 +41,7 @@ const applySchema = mongoose.Schema({
     email: {
         type: String,
         required: true,
-        
+
     },
     date: {
         type: Date,
@@ -42,11 +56,8 @@ const applySchema = mongoose.Schema({
         type: String,
         required: true
     },
-    cv: {
-        type: String,
-        required: true
-    }
-  
+    cv: { type: String }
+
 })
 
 const Apply = mongoose.model("applies", applySchema);

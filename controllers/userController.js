@@ -2,27 +2,17 @@ import User from "../models/user.js"
 import bcrypt from "bcrypt"
 import jwt from "jsonwebtoken";
 import dotenv from 'dotenv';
-import nodemailer from 'nodemailer';
+import { transporter, sendApplicantMail } from '../services/mail.js';
+import { ROLES } from '../middleware/access.js';
 import Message from "../models/message.js";
 
 
 dotenv.config()
 
-const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-        user: process.env.EMAIL_USER, 
-        pass: process.env.EMAIL_PASS //
-        pass: process.env.EMAIL_PASS // 
-    }
-});
-
 // Helper function to generate a 6-digit OTP
 const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
 
 export async function createUser(req, res) {
-    console.log("EMAIL_USER:", process.env.EMAIL_USER);
-    console.log("EMAIL_PASS length:", process.env.EMAIL_PASS?.length);
     console.log("Registration request received for:", req.body.email);
 
     try {
@@ -41,15 +31,17 @@ export async function createUser(req, res) {
 
         // 🛑 Role Security Check
         const requestedRole = req.body.role || "user";
-        if (requestedRole === "admin" || requestedRole === "madam") {
-           
-          
-            if (!req.user || req.user.role !== "admin") {
+        if (!ROLES.includes(requestedRole)) return res.status(400).json({ message: 'Invalid role.' });
+        if (requestedRole !== 'user') {
+
+
+            if (!req.user || req.user.role !== "superadmin") {
                 console.log("❌ 403: Unauthorized role creation attempt");
-                return res.status(403).json({ message: "Only admin can create privileged roles" });
+                return res.status(403).json({ message: "Only Super Admin can create privileged roles" });
             }
         }
 
+        if (requestedRole === 'admin' && (!req.body.faculty || !req.body.department)) return res.status(400).json({ message: 'Faculty/department assignment is required.' });
         const hashedPassword = bcrypt.hashSync(req.body.password, 10);
         const otp = generateOTP();
         const otpExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
@@ -61,6 +53,8 @@ export async function createUser(req, res) {
             email: req.body.email,
             password: hashedPassword,
             role: requestedRole,
+            faculty: req.body.faculty,
+            department: req.body.department,
             otp: otp,
             otpExpires: otpExpires
         });
@@ -98,7 +92,7 @@ export function loginUser(req, res) {
         if (!user.isVerified) return res.status(403).json({ message: "Please verify your email." });
 
         const isPasswordCorrect = bcrypt.compareSync(password, user.password);
-        
+
         if (isPasswordCorrect) {
             const token = jwt.sign(
                 {
@@ -110,9 +104,9 @@ export function loginUser(req, res) {
                     img: user.img
                 },
                 process.env.JWT_KEY,
-                { expiresIn: '1d' } 
+                { expiresIn: '1d' }
             );
-            
+
             res.json({ message: "login successfully", token, type: user.role });
         } else {
             res.status(401).json({ message: "invalid password" });
@@ -127,8 +121,8 @@ export async function verifyEmail(req, res) {
     try {
         const user = await User.findOne({ email });
         if (!user) return res.status(404).json({ message: "User not found" });
-        if (user.otp !== otp) return res.status(400).json({ message: "Invalid OTP" });
-        if (user.otpExpires < Date.now()) return res.status(400).json({ message: "OTP has expired." });
+        if (!otp || !user.otp || user.otp !== otp) return res.status(400).json({ message: "Invalid OTP" });
+        if (!user.otpExpires || user.otpExpires < Date.now()) return res.status(400).json({ message: "OTP has expired." });
 
         user.isVerified = true;
         user.otp = null;
@@ -151,7 +145,7 @@ export async function forgotPassword(req, res) {
         user.otpExpires = Date.now() + 10 * 60 * 1000;
         await user.save();
 
-        
+
         const mailOptions = {
             from: process.env.EMAIL_USER,
             to: user.email,
@@ -172,8 +166,8 @@ export async function resetPassword(req, res) {
     try {
         const user = await User.findOne({ email });
         if (!user) return res.status(404).json({ message: "User not found" });
-        if (user.otp !== otp) return res.status(400).json({ message: "Invalid OTP" });
-        if (user.otpExpires < Date.now()) return res.status(400).json({ message: "OTP expired." });
+        if (!otp || !user.otp || user.otp !== otp) return res.status(400).json({ message: "Invalid OTP" });
+        if (!user.otpExpires || user.otpExpires < Date.now()) return res.status(400).json({ message: "OTP expired." });
 
         user.password = bcrypt.hashSync(newPassword, 10);
         user.otp = null;
@@ -185,64 +179,31 @@ export async function resetPassword(req, res) {
     }
 }
 export async function updateUser(req, res) {
-    try {
-        const userName = req.params.userName;
-
-        // ✅ Only admin can change roles
-        if (req.body.role === "admin" || req.body.role === "madam") {
-            if (!req.user || req.user.role !== "admin") {
-                return res.status(403).json({
-                    message: "Only admin can change roles"
-                });
-            }
-        }
-
-        // ✅ Admin can update any user
-        if (req.user.role === "admin") {
-            await User.updateOne(
-                { userName: userName },
-                { $set: req.body } 
-            );
-            return res.json({
-                message: "User updated successfully"
-            });
-        }  
-
-       
-        if (req.user.userName !== userName) {
-            return res.status(403).json({
-                message: "You can only update your own profile"
-            });
-        }
-
-        const { age, gender, birthday, img } = req.body;
-        const updatingData = { age, gender, birthday, img };
-
-        await User.updateOne(
-            { userName: userName },
-            { $set: updatingData }
-        );
-
-        res.json({
-            message: "Details updated successfully"
-        });
-
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({
-            message: "Internal server error",
-            error: err
-        });
-    }
+    const admin = req.user.role === 'superadmin';
+    if (!admin && req.user.userName !== req.params.userName) return res.status(403).json({ message: 'You can only update your own profile.' });
+    if (!admin && ['role', 'faculty', 'department', 'isBlocked'].some(key => key in req.body)) return res.status(403).json({ message: 'Only a Super Admin can change permissions.' });
+    const target = await User.findOne({ userName: req.params.userName });
+    if (!target) return res.status(404).json({ message: 'User not found.' });
+    const fields = ['id', 'age', 'gender', 'birthday', 'img'];
+    if (admin) fields.push('role', 'faculty', 'department', 'isBlocked');
+    const changes = Object.fromEntries(fields.filter(key => key in req.body).map(key => [key, req.body[key]]));
+    const role = changes.role || target.role;
+    if (!ROLES.includes(role)) return res.status(400).json({ message: 'Invalid role.' });
+    const faculty = String(changes.faculty ?? target.faculty ?? '').trim();
+    const department = String(changes.department ?? target.department ?? '').trim();
+    if (role === 'admin' && (!faculty || !department)) return res.status(400).json({ message: 'Assign both a faculty and department for an Admin.' });
+    if ('id' in changes && changes.id && !/^(\d{9}[VX]|\d{12})$/i.test(changes.id)) return res.status(400).json({ message: 'Enter a valid NIC.' });
+    await User.updateOne({ _id: target._id }, { $set: changes }, { runValidators: true });
+    res.json({ message: 'User updated successfully.' });
 }
 export function isAdmin(req){
     if (req.user == null){
         return false
     }
 
-    if (req.user.role != "admin"){
+    if (req.user.role != "superadmin"){
         return false
- 
+
     }
 
     return true
@@ -252,14 +213,14 @@ export function isAdmin(req){
 export async function getUser(req,res){
     const userName=req.params.userName
     try{
-      
+
         if(!req.user){
             return res.status(401).json({
                 message:"Unauthorized"
             })
         }
-  
-        const user=await User.findOne({userName:userName})
+
+        const user=await User.findOne({userName:userName}).select('-password -otp -otpExpires')
 
         if(user==null){
             res.status(404).json({
@@ -267,23 +228,13 @@ export async function getUser(req,res){
             })
             return
         }
-        
+
         if (req.user.userName === userName) {
             return res.json(user);
         }
 
-        if(user.isBlocked === false && user.role !== "admin" && user.role !== "madam"){
-            res.json(user)
-        }
-        else{
-            if(!isAdmin(req)){
-                res.status(404).json({
-                    message:"user not found"
-                })
-            }else{
-                res.json(user)
-            }
-        }
+        if (!isAdmin(req)) return res.status(403).json({ message: 'You can only view your own profile.' });
+        res.json(user);
 
     }catch(err){
         res.status(500).json({
@@ -296,7 +247,7 @@ export async function getUser(req,res){
 export async function getAllUsers(req,res) {
     try{
         if(isAdmin(req)){
-            const user=await User.find()
+            const user=await User.find().select('-password -otp -otpExpires')
             res.json(user)
         }else{
             res.status(403).json({
@@ -304,7 +255,7 @@ export async function getAllUsers(req,res) {
             })
         }
     }catch(error){
-   
+
         res.json({
             message:"failed to get Users",
             error:error
@@ -313,7 +264,7 @@ export async function getAllUsers(req,res) {
 }
 
 export async function toggleBlockUser(req, res) {
-    if (!req.user || req.user.role !== "admin") {
+    if (!req.user || req.user.role !== "superadmin") {
         return res.status(403).json({ message: "Unauthorized: Admins Only" });
     }
 
@@ -324,9 +275,9 @@ export async function toggleBlockUser(req, res) {
         user.isBlocked = !user.isBlocked;
         await user.save();
 
-        res.json({ 
+        res.json({
             message: `User ${user.isBlocked ? 'blocked' : 'unblocked'} successfully`,
-            isBlocked: user.isBlocked 
+            isBlocked: user.isBlocked
         });
     } catch (error) {
         res.status(500).json({ message: "Toggle block status failed" });
@@ -336,28 +287,14 @@ export async function toggleBlockUser(req, res) {
 
 
 export async function sendGroupEmail(req, res) {
-    const { emails, subject, message } = req.body; 
-    if (!emails || emails.length === 0) return res.status(400).json({ message: "No emails" });
-
-    try {
-        
-        const mailOptions = {
-            from: process.env.EMAIL_USER,
-            to: emails.join(','), 
-            subject: subject,
-            text: message
-        };
-
-        await transporter.sendMail(mailOptions);
-        
-        const newMessage = new Message({ recipients: emails, subject, message });
-        await newMessage.save();
-
-        res.json({ message: "Group emails sent successfully!" });
-    } catch (error) {
-        console.error("❌ GROUP EMAIL FAILED:", error);
-        res.status(500).json({ message: "Failed to send group emails", error: error.message });
-    }
+    const { emails, subject, message } = req.body;
+    if (!Array.isArray(emails) || !emails.length || emails.length > 200 || emails.some(email => typeof email !== 'string' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))) return res.status(400).json({ message: 'Select valid email recipients (maximum 200).' });
+    if (typeof subject !== 'string' || !subject.trim() || subject.length > 200 || /[\r\n]/.test(subject) || typeof message !== 'string' || !message.trim() || message.length > 10000) return res.status(400).json({ message: 'Enter a valid subject and message.' });
+    const recipients = [...new Set(emails)];
+    const result = await sendApplicantMail({ recipients, subject, message });
+    const accepted = recipients.filter(email => (result.accepted || []).includes(email));
+    await Message.create({ sender: req.user.userName, recipients: accepted, subject, message });
+    res.status(accepted.length === recipients.length ? 200 : 207).json({ message: `Email accepted for delivery to ${accepted.length} recipient(s).`, sent: accepted.length, failed: recipients.length - accepted.length });
 }
 
 export async function getSentMessages(req, res) {
@@ -370,7 +307,7 @@ export async function getSentMessages(req, res) {
 }
 
 export async function getMessagesByEmail(req, res) {
-    const { email } = req.params; 
+    const { email } = req.params;
     try {
         const history = await Message.find({ recipients: email }).sort({ date: -1 });
         res.status(200).json(history);
@@ -390,7 +327,7 @@ export function googleAuthCallback(req, res) {
         lastName: user.lastName,
         role: user.role,
         img: user.img
-    }, process.env.JWT_KEY, { expiresIn: '1d' });  
+    }, process.env.JWT_KEY, { expiresIn: '1d' });
 
     res.redirect(`${process.env.FRONTEND_URL}/?token=${token}&type=${user.role}`);
 }

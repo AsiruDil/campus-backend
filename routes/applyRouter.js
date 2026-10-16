@@ -1,11 +1,14 @@
-import express from "express";
-import { getApplies, saveApply } from "../controllers/applyConroller.js";
-
-
+import express from 'express';
+import { getApplies, saveApply, updateStatus, downloadDocuments, emailApplicants, retentionPreview, deleteExpiredDocuments } from '../controllers/applyConroller.js';
+import { requireRoles, REVIEWERS } from '../middleware/access.js';
+import { upload } from '../services/documents.js';
 const applyRouter = express.Router();
-
-applyRouter.get("/",getApplies);
-applyRouter.post("/",saveApply);
-
-
+applyRouter.get('/', requireRoles(...REVIEWERS), getApplies);
+applyRouter.post('/', requireRoles('user'), upload, saveApply);
+applyRouter.get('/retention', requireRoles('superadmin'), retentionPreview);
+applyRouter.delete('/retention', requireRoles('superadmin'), deleteExpiredDocuments);
+applyRouter.post('/email', requireRoles(...REVIEWERS), emailApplicants);
+applyRouter.patch('/:id/status', requireRoles(...REVIEWERS), updateStatus);
+applyRouter.get('/:id/documents', requireRoles('user', ...REVIEWERS), downloadDocuments);
+applyRouter.get('/:id/cv', requireRoles('user', ...REVIEWERS), downloadDocuments);
 export default applyRouter;

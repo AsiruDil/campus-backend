@@ -4,11 +4,12 @@ import { isAdmin } from "./userController.js"
 
 export async function createJob(req, res) {
     try {
+        if (!req.body.deadline || !Number.isFinite(Date.parse(req.body.deadline)) || new Date(req.body.deadline) <= new Date()) return res.status(400).json({ message: 'Choose a future application deadline.' });
         // Find the job with the highest jobId string
         const lastJob = await JobVacancy
             .findOne()
             .sort({ jobId: -1 })
-            .select('jobId'); 
+            .select('jobId');
 
         // Start at 0 if the database is empty
         let nextJobId = "JOB00000";
@@ -24,6 +25,8 @@ export async function createJob(req, res) {
         const jobVacancy = new JobVacancy({
             jobId: nextJobId,
             jobRole: req.body.jobRole,
+            category: req.body.category,
+            jobQualifications: req.body.jobQualifications,
             location: req.body.location,
             faculty: req.body.faculty,
             department: req.body.department,
@@ -37,9 +40,9 @@ export async function createJob(req, res) {
 
         const savedJob = await jobVacancy.save();
 
-        res.status(201).json({ 
+        res.status(201).json({
             message: "Job Vacancy Created Successfully",
-            data: savedJob 
+            data: savedJob
         });
 
     } catch (err) {
@@ -51,9 +54,9 @@ export async function createJob(req, res) {
             });
         }
 
-        res.status(500).json({
-            message: "Internal Server Error",
-            error: err.message 
+        res.status(err.name === "ValidationError" ? 400 : 500).json({
+            message: err.name === "ValidationError" ? err.message : "Internal Server Error",
+            error: err.message
         });
     }
 }
@@ -103,17 +106,19 @@ export async function updateJob(req,res){
     }
 
     const jobId=req.params.id;
-    const updatingData=req.body;
+    const fields = ['jobRole', 'category', 'location', 'faculty', 'department', 'jobDescription', 'jobResponsibilities', 'jobQualifications', 'deadline', 'jobType', 'salary'];
+    const updatingData = Object.fromEntries(fields.filter(key => key in req.body).map(key => [key, req.body[key]]));
+    if (updatingData.deadline && (!Number.isFinite(Date.parse(updatingData.deadline)) || new Date(updatingData.deadline) <= new Date())) return res.status(400).json({ message: 'Choose a future application deadline.' });
 
     try{
-        await JobVacancy.updateOne(
-            {jobId:jobId},
-            updatingData
-        )
+        const vacancy = await JobVacancy.findOne({ jobId });
+        if (!vacancy) return res.status(404).json({ message: 'Job vacancy not found.' });
+        Object.assign(vacancy, updatingData);
+        await vacancy.save();
         res.status(200).send({ message: "Job Vacancy Updated Successfully" });
     }
     catch(err){
-        res.status(500).send({ message: "Failed to Update Job Vacancy", error: err });
+        res.status(err.name === "ValidationError" ? 400 : 500).send({ message: err.name === "ValidationError" ? err.message : "Failed to Update Job Vacancy" });
     }
 }
 

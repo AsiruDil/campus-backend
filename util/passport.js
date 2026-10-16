@@ -1,18 +1,18 @@
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
-import User from "../models/user.js"; 
+import User from "../models/user.js";
 import bcrypt from "bcrypt";
 import dotenv from "dotenv";
 
 dotenv.config();
 
-passport.use(
+if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) passport.use(
   new GoogleStrategy(
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
       callbackURL: "http://localhost:3000/api/users/auth/google/callback",
-      proxy: true 
+      proxy: true
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
@@ -22,9 +22,9 @@ passport.use(
         if (!user) {
           // 2. If new user, create an account
           // Generate a secure random password to satisfy the DB schema
-          const randomPassword = Math.random().toString(36).slice(-10) + "A1@"; 
+          const randomPassword = Math.random().toString(36).slice(-10) + "A1@";
           const hashedPassword = bcrypt.hashSync(randomPassword, 10);
-          
+
           // Generate a unique userName based on their email
           const baseUserName = profile.emails[0].value.split("@")[0];
           const uniqueUserName = baseUserName + Math.floor(Math.random() * 10000);
