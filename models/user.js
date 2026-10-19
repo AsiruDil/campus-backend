@@ -39,6 +39,7 @@ const userSchema = mongoose.Schema({
         type: String,
         required: false,
     },
+    authVersion: { type: Number, default: 0 },
     roleVersion: { type: Number, default: 2 },
     faculty: { type: String, trim: true },
     department: { type: String, trim: true },
@@ -55,7 +56,7 @@ const userSchema = mongoose.Schema({
     img: {
         type: String,
         required: false,
-        default: "https://avatar.iran.liara.run/public/boy?username=Ash"
+        default: "/profile.png"
     },
     date: {
         type: Date,

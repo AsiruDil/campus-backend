@@ -1,8 +1,10 @@
 import User from "../models/user.js"
+import PendingRegistration from "../models/pendingRegistration.js"
+import { randomInt } from "node:crypto";
 import bcrypt from "bcrypt"
 import jwt from "jsonwebtoken";
 import dotenv from 'dotenv';
-import { transporter, sendApplicantMail } from '../services/mail.js';
+import { sendMail, sendApplicantMail } from '../services/mail.js';
 import { ROLES } from '../middleware/access.js';
 import Message from "../models/message.js";
 
@@ -10,16 +12,16 @@ import Message from "../models/message.js";
 dotenv.config()
 
 // Helper function to generate a 6-digit OTP
-const generateOTP = () => Math.floor(100000 + Math.random() * 900000).toString();
+const generateOTP = () => randomInt(100000, 1000000).toString();
 
 export async function createUser(req, res) {
-    console.log("Registration request received for:", req.body.email);
+
 
     try {
         const findName = await User.findOne({ userName: req.body.userName });
         const findEmail = await User.findOne({ email: req.body.email });
 
-        // 🛑 Check if user already exists
+       
         if (findName) {
             console.log("❌ 403: Username exists");
             return res.status(403).json({ message: "UserName already exists" });
@@ -29,7 +31,7 @@ export async function createUser(req, res) {
             return res.status(403).json({ message: "Email already exists" });
         }
 
-        // 🛑 Role Security Check
+        
         const requestedRole = req.body.role || "user";
         if (!ROLES.includes(requestedRole)) return res.status(400).json({ message: 'Invalid role.' });
         if (requestedRole !== 'user') {
@@ -42,7 +44,7 @@ export async function createUser(req, res) {
         }
 
         if (requestedRole === 'admin' && (!req.body.faculty || !req.body.department)) return res.status(400).json({ message: 'Faculty/department assignment is required.' });
-        const hashedPassword = bcrypt.hashSync(req.body.password, 10);
+        const hashedPassword = await bcrypt.hash(req.body.password, 12);
         const otp = generateOTP();
         const otpExpires = Date.now() + 10 * 60 * 1000; // 10 minutes
 
@@ -59,12 +61,17 @@ export async function createUser(req, res) {
             otpExpires: otpExpires
         });
 
-        await user.save();
-        console.log("✅ User saved to DB. Sending OTP email...");
+        await user.validate();
+        const pendingName = await PendingRegistration.findOne({ userName: user.userName });
+        if (pendingName && pendingName.email !== user.email) {
+            if (pendingName.otpExpires > new Date()) {
+                return res.status(409).json({ message: "This username has a pending registration. Please choose another." });
+            }
+            await PendingRegistration.deleteOne({ _id: pendingName._id });
+        }
 
         // Send OTP Email
         const mailOptions = {
-            from: process.env.EMAIL_USER,
             to: req.body.email,
             subject: 'Verify Your Account - Job Finder',
             html: `<h3>Welcome to Job Finder!</h3>
@@ -72,12 +79,19 @@ export async function createUser(req, res) {
                    <p>This code will expire in 10 minutes.</p>`
         };
 
-        await transporter.sendMail(mailOptions);
-        res.json({ message: "User created successfully. Please check your email for the OTP." });
+        await sendMail(mailOptions);
+        const pending = user.toObject();
+        delete pending._id;
+        delete pending.__v;
+        await PendingRegistration.findOneAndUpdate(
+            { email: user.email }, { $set: pending },
+            { upsert: true, runValidators: true, setDefaultsOnInsert: true },
+        );
+        res.json({ message: "OTP sent. Verify your email to complete registration." });
 
     } catch (err) {
         console.error("❌ REGISTRATION ERROR:", err);
-        res.status(500).json({ message: "Registration failed", error: err.message });
+        res.status(err.status || 500).json({ message: err.status && err.status < 500 ? err.message : "We could not send your verification code. Please try again later." });
     }
 }
 
@@ -86,12 +100,12 @@ export function loginUser(req, res) {
 
     User.findOne({
         $or: [{ email: email }, { userName: userName }]
-    }).then((user) => {
+    }).then(async (user) => {
         if (!user) return res.status(404).json({ message: "User not found" });
         if (user.isBlocked) return res.status(403).json({ message: "Account blocked." });
         if (!user.isVerified) return res.status(403).json({ message: "Please verify your email." });
 
-        const isPasswordCorrect = bcrypt.compareSync(password, user.password);
+        const isPasswordCorrect = await bcrypt.compare(password, user.password);
 
         if (isPasswordCorrect) {
             const token = jwt.sign(
@@ -101,7 +115,8 @@ export function loginUser(req, res) {
                     firstName: user.firstName,
                     lastName: user.lastName,
                     role: user.role,
-                    img: user.img
+                    authVersion: user.authVersion || 0,
+        img: user.img
                 },
                 process.env.JWT_KEY,
                 { expiresIn: '1d' }
@@ -119,18 +134,28 @@ export function loginUser(req, res) {
 export async function verifyEmail(req, res) {
     const { email, otp } = req.body;
     try {
-        const user = await User.findOne({ email });
-        if (!user) return res.status(404).json({ message: "User not found" });
+        const pending = await PendingRegistration.findOne({ email });
+        const user = pending || await User.findOne({ email });
+        if (!user) return res.status(404).json({ message: "Registration not found. Please register again." });
         if (!otp || !user.otp || user.otp !== otp) return res.status(400).json({ message: "Invalid OTP" });
         if (!user.otpExpires || user.otpExpires < Date.now()) return res.status(400).json({ message: "OTP has expired." });
 
-        user.isVerified = true;
-        user.otp = null;
-        user.otpExpires = null;
-        await user.save();
+        if (pending) {
+            const details = pending.toObject();
+            delete details._id;
+            delete details.__v;
+            await User.create({ ...details, isVerified: true, otp: null, otpExpires: null });
+            await PendingRegistration.deleteOne({ _id: pending._id });
+        } else {
+            // Keep verification working for previously registered accounts.
+            user.isVerified = true;
+            user.otp = null;
+            user.otpExpires = null;
+            await user.save();
+        }
         res.status(200).json({ message: "Email verified successfully" });
     } catch (error) {
-        res.status(500).json({ message: "Server error", error: error.message });
+        res.status(500).json({ message: "Server error", error: undefined });
     }
 }
 
@@ -147,17 +172,16 @@ export async function forgotPassword(req, res) {
 
 
         const mailOptions = {
-            from: process.env.EMAIL_USER,
             to: user.email,
             subject: 'Password Reset OTP - Job Finder',
             html: `<p>Your OTP for password reset is: <strong>${otp}</strong>. Valid for 10 minutes.</p>`
         };
 
-        await transporter.sendMail(mailOptions);
+        await sendMail(mailOptions);
         res.status(200).json({ message: "OTP sent to email successfully" });
     } catch (error) {
-        console.error("❌ NODEMAILER ERROR (Forgot Pw):", error);
-        res.status(500).json({ message: "Failed to send reset OTP", error: error.message });
+        console.error("❌ EMAIL ERROR (Forgot Pw):", error);
+        res.status(error.status || 500).json({ message: error.status && error.status < 500 ? error.message : "We could not send your verification code. Please try again later." });
     }
 }
 
@@ -169,13 +193,14 @@ export async function resetPassword(req, res) {
         if (!otp || !user.otp || user.otp !== otp) return res.status(400).json({ message: "Invalid OTP" });
         if (!user.otpExpires || user.otpExpires < Date.now()) return res.status(400).json({ message: "OTP expired." });
 
-        user.password = bcrypt.hashSync(newPassword, 10);
+        user.password = await bcrypt.hash(newPassword, 12);
+        user.authVersion = (user.authVersion || 0) + 1;
         user.otp = null;
         user.otpExpires = null;
         await user.save();
         res.status(200).json({ message: "Password reset successfully" });
     } catch (error) {
-        res.status(500).json({ message: "Server error", error: error.message });
+        res.status(500).json({ message: "Server error", error: undefined });
     }
 }
 export async function updateUser(req, res) {
@@ -239,7 +264,7 @@ export async function getUser(req,res){
     }catch(err){
         res.status(500).json({
             message:"internal error",
-            error:err
+            error:undefined
         })
     }
 }
@@ -258,7 +283,7 @@ export async function getAllUsers(req,res) {
 
         res.json({
             message:"failed to get Users",
-            error:error
+            error:undefinedor
         })
     }
 }
@@ -302,7 +327,7 @@ export async function getSentMessages(req, res) {
         const history = await Message.find().sort({ date: -1 });
         res.status(200).json(history);
     } catch (error) {
-        res.status(500).json({ message: "Error", error: error.message });
+        res.status(500).json({ message: "Error", error: undefined });
     }
 }
 
@@ -312,7 +337,7 @@ export async function getMessagesByEmail(req, res) {
         const history = await Message.find({ recipients: email }).sort({ date: -1 });
         res.status(200).json(history);
     } catch (error) {
-        res.status(500).json({ message: "Error", error: error.message });
+        res.status(500).json({ message: "Error", error: undefined });
     }
 }
 
@@ -326,8 +351,9 @@ export function googleAuthCallback(req, res) {
         firstName: user.firstName,
         lastName: user.lastName,
         role: user.role,
+        authVersion: user.authVersion || 0,
         img: user.img
     }, process.env.JWT_KEY, { expiresIn: '1d' });
 
-    res.redirect(`${process.env.FRONTEND_URL}/?token=${token}&type=${user.role}`);
+    res.redirect(`${process.env.FRONTEND_URL}/#token=${token}&type=${user.role}`);
 }

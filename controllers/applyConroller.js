@@ -11,7 +11,6 @@ import {
   removeArchive,
   removeLegacyCV,
   retentionCutoff,
-  CATEGORIES,
   STATUSES,
   documentError,
   inferCategory,
@@ -20,6 +19,8 @@ import {
 export async function saveApply(req, res) {
   let archive;
   try {
+    const missingFields = ['id', 'birthday', 'gender', 'age'].filter(key => req.user[key] === undefined || req.user[key] === null || String(req.user[key]).trim() === '' || req.user[key] === '-');
+    if (missingFields.length) return res.status(400).json({ code: 'PROFILE_INCOMPLETE', missingFields, message: 'Complete your profile (NIC, birthday, age and gender) before submitting an application.' });
     const job = await JobVacancy.findOne({ jobId: req.body.jobId });
     if (!job)
       return res
@@ -41,7 +42,7 @@ export async function saveApply(req, res) {
       throw documentError("Enter a valid mobile number.");
     const category =
       job.category || inferCategory(job.jobRole) || req.body.category;
-    if (!CATEGORIES.includes(category))
+    if (typeof category !== "string" || !category.trim() || category.length > 150)
       throw documentError("Please select a position category.");
     archive = await createArchive(req.files);
     const application = new Apply({
@@ -79,7 +80,7 @@ export async function saveApply(req, res) {
 export async function getApplies(req, res) {
   const query = req.user.role === "admin" ? { isAvailable: true } : {};
   const { category, status, jobId } = req.query;
-  if (category && !CATEGORIES.includes(category))
+  if (category && (typeof category !== "string" || !category.trim() || category.length > 150))
     throw documentError("Invalid position category.");
   if (status && !STATUSES.includes(status))
     throw documentError("Invalid application status.");
@@ -138,7 +139,7 @@ export async function updateStatus(req, res) {
         reviewHistory: { status, by: req.user.userName, date: new Date() },
       },
     },
-    { new: true, runValidators: true },
+    { returnDocument: 'after', runValidators: true },
   ).select("-archiveKey");
   if (!application)
     return res.status(409).json({

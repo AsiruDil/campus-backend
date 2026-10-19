@@ -1,3 +1,4 @@
+import { mockPhotoStorage } from './mock-photo-storage.js';
 // Isolated browser-test fixture. Never connect this fixture to a production database.
 import mongoose from "mongoose";
 import { MongoMemoryServer } from "mongodb-memory-server";
@@ -5,16 +6,18 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import bcrypt from "bcrypt";
-import app from "../app.js";
 import User from "../models/user.js";
 import Job from "../models/jobVacancyModel.js";
 import Apply from "../models/apply.js";
 import { createArchive } from "../services/documents.js";
-import { transporter } from "../services/mail.js";
+import { mailDelivery } from "../services/mail.js";
 
+process.env.CORS_ORIGINS = "http://127.0.0.1:5174";
+mockPhotoStorage();
 process.env.JWT_KEY = "browser-test-only-key";
-process.env.EMAIL_USER = "testing@example.test";
-process.env.EMAIL_PASS = "test-mail-transport";
+const { default: app } = await import("../app.js");
+process.env.RESEND_FROM = "testing@example.test";
+process.env.RESEND_API_KEY = "test-mail-transport";
 const directory = await mkdtemp(path.join(os.tmpdir(), "campus-browser-"));
 process.env.UPLOAD_DIR = directory;
 let mongo;
@@ -26,12 +29,13 @@ else {
   mongo = await MongoMemoryServer.create({ binary: { version: "8.0.12" } });
   await mongoose.connect(mongo.getUri());
 }
-transporter.sendMail = async (options) => ({
+mailDelivery.sendMail = async (options) => ({
   accepted: options.bcc,
   rejected: [],
 });
 for (const role of ["user", "admin", "superadmin"])
   await User.create({
+    id: "200012345678", age: 26, gender: "Male", birthday: "2000-05-02",
     userName: role,
     firstName: role === "user" ? "Nimali" : role,
     lastName: "Test",

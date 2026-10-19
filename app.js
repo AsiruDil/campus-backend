@@ -1,6 +1,8 @@
 import "dotenv/config";
 import express from "express";
 import cors from "cors";
+import helmet from "helmet";
+import mongoose from "mongoose";
 import jwt from "jsonwebtoken";
 import passport from "passport";
 import userRouter from "./routes/userRoute.js";
@@ -8,7 +10,14 @@ import jobVacancyRouter from "./routes/jobVacancyRouter.js";
 import applyRouter from "./routes/applyRouter.js";
 
 const app = express();
-app.use(cors());
+app.disable('x-powered-by');
+if (process.env.TRUST_PROXY_HOPS) app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS));
+app.use(helmet());
+const allowedOrigins = (process.env.CORS_ORIGINS || process.env.FRONTEND_URL || 'http://localhost:5173').split(',').map(value => value.trim());
+app.use(cors({ origin(origin, callback) { callback(null, !origin || allowedOrigins.includes(origin)); } }));
+app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); });
+app.get('/health', (req, res) => res.json({ status: 'ok' }));
+app.get('/ready', (req, res) => res.status(mongoose.connection.readyState === 1 ? 200 : 503).json({ status: mongoose.connection.readyState === 1 ? 'ready' : 'not-ready' }));
 app.use(express.json({ limit: "100kb" }));
 app.use(passport.initialize());
 app.use((req, res, next) => {
@@ -50,7 +59,7 @@ app.use((error, req, res, next) => {
     .status(status)
     .json({
       message:
-        status < 500 || status === 503
+        status < 500
           ? error.message
           : "The request could not be completed. Please try again.",
     });

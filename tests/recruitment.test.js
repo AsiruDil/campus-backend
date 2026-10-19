@@ -1,3 +1,5 @@
+import { mockPhotoStorage } from './mock-photo-storage.js';
+import { storageTransport } from '../services/storage.js';
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { mkdtemp, rm, readdir } from "node:fs/promises";
@@ -10,17 +12,18 @@ import jwt from "jsonwebtoken";
 import JSZip from "jszip";
 import app from "../app.js";
 import User from "../models/user.js";
+import PendingRegistration from "../models/pendingRegistration.js";
 import Apply from "../models/apply.js";
 import Job from "../models/jobVacancyModel.js";
 import Message from "../models/message.js";
-import { transporter } from "../services/mail.js";
+import { mailDelivery } from "../services/mail.js";
 import { migrateLegacyRoles } from "../services/roleMigration.js";
 import { retentionCutoff, CV_LIMIT } from "../services/documents.js";
 
 process.env.JWT_KEY = "test-only-signing-key-not-for-production";
-process.env.EMAIL_USER = "sender@example.test";
-process.env.EMAIL_PASS = "test-only-mail-transport";
-let mongo, temp, primary, outside, originalMail;
+process.env.RESEND_FROM = "sender@example.test";
+process.env.RESEND_API_KEY = "test-only-mail-transport";
+let mongo, temp, primary, outside, originalMail, restoreStorage;
 const tokens = {};
 const cv = Buffer.from("%PDF-1.4\nTest CV\n%%EOF");
 function auth(role) {
@@ -42,6 +45,7 @@ function submit(jobId = "JOB00001", overrides = {}) {
   return operation;
 }
 before(async () => {
+  restoreStorage = mockPhotoStorage();
   temp = await mkdtemp(path.join(os.tmpdir(), "campus-tests-"));
   process.env.UPLOAD_DIR = temp;
   if (process.env.MONGODB_TEST_URL) {
@@ -54,7 +58,8 @@ before(async () => {
   }
   for (const role of ["user", "other", "admin", "superadmin", "unassigned"]) {
     const account = await User.create({
-      userName: role,
+      id: "200012345678", age: 26, gender: "Male", birthday: "2000-05-02",
+    userName: role,
       firstName: role,
       lastName: "Applicant",
       email: `${role}@example.test`,
@@ -111,10 +116,11 @@ before(async () => {
       deadline: new Date("2021-01-01"),
     },
   ]);
-  originalMail = transporter.sendMail;
+  originalMail = mailDelivery.sendMail;
 });
 after(async () => {
-  transporter.sendMail = originalMail;
+  mailDelivery.sendMail = originalMail;
+  restoreStorage();
   if (mongoose.connection.readyState === 1)
     await mongoose.connection.dropDatabase();
   await mongoose.disconnect();
@@ -136,6 +142,19 @@ test("legacy role migration is correct and idempotent", async () => {
   assert.equal((await User.findOne({ userName: "oldMadam" })).role, "admin");
   assert.equal((await User.findOne({ userName: "admin" })).role, "admin");
 });
+test("incomplete profiles cannot submit applications and can continue after completing their profile", async () => {
+  await User.updateOne({ userName: 'user' }, { $unset: { id: 1, birthday: 1, age: 1, gender: 1 } });
+  try {
+    const result = await submit().attach('cv', cv, 'CV.pdf').expect(400);
+    assert.equal(result.body.code, 'PROFILE_INCOMPLETE');
+    assert.deepEqual(result.body.missingFields.sort(), ['age', 'birthday', 'gender', 'id']);
+    await request(app).put('/api/users/user').set('Authorization', auth('user'))
+      .send({ id: '200012345678', age: 26, gender: 'Male', birthday: '2000-05-02' }).expect(200);
+  } finally {
+    await User.updateOne({ userName: 'user' }, { $set: { id: '200012345678', age: 26, gender: 'Male', birthday: '2000-05-02' } });
+  }
+});
+
 test("authenticated multipart submission creates a ZIP with CV and supporting files", async () => {
   const response = await submit()
     .attach("cv", cv, "resume.pdf")
@@ -247,6 +266,53 @@ test("Admins see only assigned faculty AND department; Super Admin sees all", as
     .set("Authorization", auth("user"))
     .expect(403);
 });
+test("Super Admin can assign all faculties and departments without bypassing specific restrictions", async () => {
+  const physics = await Apply.create({ jobId: "JOB00003", jobRole: "Probationary lecturer", category: "probationary", faculty: "Science", department: "Physics", userName: "user", firstName: "Scope", lastName: "Test", email: "scope@example.test", mobileNumber: "0771234567" });
+  try {
+    for (const [faculty, department, includesOutside, includesPhysics] of [
+      ["Science", "*", false, true],
+      ["*", "Computing", false, false],
+      ["*", "*", true, true],
+    ]) {
+      await request(app).put("/api/users/admin").set("Authorization", auth("superadmin"))
+        .send({ role: "admin", faculty, department }).expect(200);
+      const result = await request(app).get("/api/apply").set("Authorization", auth("admin")).expect(200);
+      assert(result.body.some(a => a._id === primary.id));
+      assert.equal(result.body.some(a => a._id === outside.id), includesOutside);
+      assert.equal(result.body.some(a => a._id === physics.id), includesPhysics);
+    }
+    await request(app).put("/api/users/admin").set("Authorization", auth("user"))
+      .send({ faculty: "*", department: "*" }).expect(403);
+  } finally {
+    await User.updateOne({ userName: "admin" }, { $set: { faculty: "Science", department: "Computing" } });
+    await Apply.deleteOne({ _id: physics._id });
+  }
+});
+
+test("custom position categories, faculties and job types work through job creation and application review", async () => {
+  await request(app).post("/api/jobs").set("Authorization", auth("superadmin")).send({
+    jobRole: "Research Fellow", category: "Research fellow", faculty: "Graduate Studies",
+    department: "Research", jobType: "Contract", location: "Main Campus",
+    deadline: new Date(Date.now() + 86400000).toISOString(),
+  }).expect(201);
+  const job = await Job.findOne({ jobRole: "Research Fellow" });
+  assert.equal(job.category, "Research fellow");
+  assert.equal(job.faculty, "Graduate Studies");
+  assert.equal(job.jobType, "Contract");
+  try {
+    await submit(job.jobId).attach("cv", cv, "CV.pdf").expect(201);
+    const response = await request(app).get("/api/apply").query({ category: "Research fellow" })
+      .set("Authorization", auth("superadmin")).expect(200);
+    assert.equal(response.body.length, 1);
+    assert.equal(response.body[0].jobId, job.jobId);
+    assert.equal(response.body[0].category, "Research fellow");
+  } finally {
+    // Application files are cleaned by the test suite's temporary directory cleanup.
+    await Apply.deleteMany({ jobId: job.jobId });
+    await Job.deleteOne({ _id: job._id });
+  }
+});
+
 test("historical applications remain pending and respect vacancy scope", async () => {
   const legacy = await Apply.collection.insertOne({
     jobId: "JOB00001",
@@ -324,7 +390,7 @@ test("downloads enforce ownership, reviewer scope, login, and no-store caching",
 });
 test("bulk email deduplicates recipients, uses BCC, and records only accepted recipients", async () => {
   let sent;
-  transporter.sendMail = async (options) => {
+  mailDelivery.sendMail = async (options) => {
     sent = options;
     return { accepted: options.bcc, rejected: [] };
   };
@@ -350,13 +416,13 @@ test("bulk email deduplicates recipients, uses BCC, and records only accepted re
     .expect(200);
   assert.equal(response.body.sent, 1);
   assert.deepEqual(sent.bcc, ["user@example.test"]);
-  assert.equal(sent.to, process.env.EMAIL_USER);
+  assert.equal(sent.to, process.env.RESEND_FROM);
   assert.equal(await Message.countDocuments({ subject: "Interview" }), 1);
   assert((await Apply.findById(primary.id)).lastNotifiedAt);
 });
-test("bulk mail enforces scope, shortlist validation and input limits before contacting SMTP", async () => {
+test("bulk mail enforces scope, shortlist validation and input limits before contacting Resend", async () => {
   let called = false;
-  transporter.sendMail = async () => {
+  mailDelivery.sendMail = async () => {
     called = true;
     return { accepted: [] };
   };
@@ -392,14 +458,14 @@ test("bulk mail enforces scope, shortlist validation and input limits before con
   assert.equal(called, false);
 });
 test("mail configuration failures and partial rejections are reported accurately", async () => {
-  delete process.env.EMAIL_PASS;
+  delete process.env.RESEND_API_KEY;
   await request(app)
     .post("/api/apply/email")
     .set("Authorization", auth("admin"))
     .send({ applicationIds: [primary.id], subject: "X", message: "Y" })
     .expect(503);
-  process.env.EMAIL_PASS = "test-only-mail-transport";
-  transporter.sendMail = async () => ({
+  process.env.RESEND_API_KEY = "test-only-mail-transport";
+  mailDelivery.sendMail = async () => ({
     accepted: [],
     rejected: ["user@example.test"],
   });
@@ -523,4 +589,96 @@ test("legacy deletion failures and CVs shared by recent applications are preserv
     (await Apply.findById(legacy.insertedId)).cv,
     "https://example.test/old.pdf",
   );
+});
+
+
+test("profile photos require authentication, validate content and cannot delete another account's photo", async () => {
+  const restoreStorage = mockPhotoStorage();
+  try {
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1sAAAAASUVORK5CYII=', 'base64');
+  await request(app).post('/api/users/profile-photo').attach('photo', png, 'avatar.png').expect(401);
+  await request(app).post('/api/users/profile-photo').set('Authorization', auth('user')).attach('photo', Buffer.from('<script>bad</script>'), 'avatar.png').expect(400);
+  const uploaded = await request(app).post('/api/users/profile-photo').set('Authorization', auth('user')).attach('photo', png, 'avatar.png').expect(201);
+  assert.match(uploaded.body.img, /^\/api\/users\/avatar\/supabase~photos~[a-f0-9-]+\.png$/);
+  const photo = await request(app).get(uploaded.body.img).expect(200).expect('Content-Type', /image\/png/);
+  assert(photo.body.equals(png));
+  assert.equal(photo.headers['cross-origin-resource-policy'], 'cross-origin');
+  await request(app).put('/api/users/other').set('Authorization', auth('other')).send({ img: uploaded.body.img }).expect(200);
+  await request(app).post('/api/users/profile-photo').set('Authorization', auth('other')).attach('photo', png, 'avatar.png').expect(201);
+  await request(app).get(uploaded.body.img).expect(200);
+  await request(app).post('/api/users/profile-photo').set('Authorization', auth('user')).attach('photo', png, 'avatar.png').expect(201);
+  await request(app).get(uploaded.body.img).expect(404);
+  await request(app).get('/api/users/avatar/' + 'a'.repeat(24) + '-11111111-1111-1111-1111-111111111111.png').expect(404);
+  } finally { restoreStorage(); }
+});
+
+test("Supabase avatars remain behind the same photo API and support replacement", async () => {
+  const saved = Object.fromEntries(['STORAGE_PROVIDER', 'SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_AVATARS_BUCKET'].map(key => [key, process.env[key]]));
+  const originalFetch = storageTransport.fetch;
+  const objects = new Map();
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aP1sAAAAASUVORK5CYII=', 'base64');
+  try {
+    Object.assign(process.env, { STORAGE_PROVIDER: 'supabase', SUPABASE_URL: 'https://storage.example.test', SUPABASE_SERVICE_ROLE_KEY: 'server-test-key', SUPABASE_AVATARS_BUCKET: 'photos' });
+    storageTransport.fetch = async (url, options) => {
+      const route = new URL(url).pathname;
+      if (options.method === 'POST') { objects.set(route, Buffer.from(options.body)); return Response.json({}); }
+      if (options.method === 'DELETE') { for (const key of JSON.parse(options.body).prefixes) objects.delete(`${route}/${key}`); return Response.json([]); }
+      const key = route.replace('/authenticated/', '/');
+      return objects.has(key) ? new Response(objects.get(key)) : Response.json({ statusCode: 404 }, { status: 400 });
+    };
+    const first = await request(app).post('/api/users/profile-photo').set('Authorization', auth('user')).attach('photo', png, 'avatar.png').expect(201);
+    assert(first.body.img.includes('supabase~photos~'));
+    await request(app).get(first.body.img).expect(200).expect('Content-Type', /image\/png/);
+    await request(app).post('/api/users/profile-photo').set('Authorization', auth('user')).attach('photo', png, 'avatar.png').expect(201);
+    await request(app).get(first.body.img).expect(404);
+    assert.equal(objects.size, 1);
+  } finally {
+    storageTransport.fetch = originalFetch;
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    await User.updateOne({ userName: 'user' }, { $set: { img: '/profile.png' } });
+  }
+});
+
+test("password reset revokes existing sessions and accepts only the new password", async () => {
+  await User.updateOne({ userName: 'other' }, { $set: { otp: '123456', otpExpires: new Date(Date.now() + 60000) } });
+  try {
+    await request(app).post('/api/users/reset-password').send({ email: 'other@example.test', otp: '123456', newPassword: 'NewPassword123!' }).expect(200);
+    await request(app).get('/api/users/other').set('Authorization', auth('other')).expect(401);
+    const login = await request(app).post('/api/users/login').send({ email: 'other@example.test', password: 'NewPassword123!' }).expect(200);
+    await request(app).get('/api/users/other').set('Authorization', `Bearer ${login.body.token}`).expect(200);
+  } finally { await User.updateOne({ userName: 'other' }, { $set: { authVersion: 0 } }); }
+});
+
+test("signup is temporary until valid OTP; failed email, wrong OTP and expired OTP create no account", async () => {
+  const original = mailDelivery.sendMail;
+  const details = { firstName: "Pending", lastName: "Applicant", userName: "otp-signup", email: "otp-signup@example.test", password: "TestPassword123!" };
+  try {
+    mailDelivery.sendMail = async () => { const error = new Error("Resend test mode can send OTPs only to your Resend account email. Verify a domain and set RESEND_FROM."); error.status = 502; throw error; };
+    const failure = await request(app).post("/api/users").send(details).expect(502);
+    assert.equal(failure.body.message, "We could not send your verification code. Please try again later.");
+    assert(!JSON.stringify(failure.body).includes("RESEND_FROM"));
+    assert.equal(await User.countDocuments({ email: details.email }), 0);
+    assert.equal(await PendingRegistration.countDocuments({ email: details.email }), 0);
+    mailDelivery.sendMail = async () => ({ accepted: [details.email], rejected: [] });
+    await request(app).post("/api/users").send(details).expect(200);
+    assert.equal(await User.countDocuments({ email: details.email }), 0);
+    let pending = await PendingRegistration.findOne({ email: details.email });
+    assert(pending);
+    assert.notEqual(pending.password, details.password);
+    await request(app).post("/api/users/login").send(details).expect(404);
+    await request(app).post("/api/users/verify-email").send({ email: details.email, otp: "invalid" }).expect(400);
+    assert.equal(await User.countDocuments({ email: details.email }), 0);
+    await PendingRegistration.updateOne({ _id: pending._id }, { $set: { otpExpires: new Date(Date.now() - 1000) } });
+    await request(app).post("/api/users/verify-email").send({ email: details.email, otp: pending.otp }).expect(400);
+    await request(app).post("/api/users").send(details).expect(200);
+    pending = await PendingRegistration.findOne({ email: details.email });
+    await request(app).post("/api/users/verify-email").send({ email: details.email, otp: pending.otp }).expect(200);
+    assert.equal((await User.findOne({ email: details.email })).isVerified, true);
+    assert.equal(await PendingRegistration.countDocuments({ email: details.email }), 0);
+    const login = await request(app).post("/api/users/login").send(details).expect(200);
+    assert(login.body.token);
+    await request(app).post("/api/users").send(details).expect(403);
+  } finally {
+    mailDelivery.sendMail = original;
+  }
 });
