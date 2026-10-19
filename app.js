@@ -8,6 +8,8 @@ import passport from "passport";
 import userRouter from "./routes/userRoute.js";
 import jobVacancyRouter from "./routes/jobVacancyRouter.js";
 import applyRouter from "./routes/applyRouter.js";
+import activityLogRouter from './routes/activityLogRouter.js';
+import { activityLogger } from './middleware/activityLog.js';
 
 const app = express();
 app.disable('x-powered-by');
@@ -36,6 +38,8 @@ app.use((req, res, next) => {
       .json({ message: "Session expired or invalid. Please log in again." });
   }
 });
+app.use('/api', activityLogger);
+app.use('/api/activity-logs', activityLogRouter);
 app.use("/api/users", userRouter);
 app.use("/api/jobs", jobVacancyRouter);
 app.use("/api/apply", applyRouter);

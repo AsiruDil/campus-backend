@@ -16,6 +16,7 @@ import PendingRegistration from "../models/pendingRegistration.js";
 import Apply from "../models/apply.js";
 import Job from "../models/jobVacancyModel.js";
 import Message from "../models/message.js";
+import ActivityLog from '../models/activityLog.js';
 import { mailDelivery } from "../services/mail.js";
 import { migrateLegacyRoles } from "../services/roleMigration.js";
 import { retentionCutoff, CV_LIMIT } from "../services/documents.js";
@@ -29,6 +30,29 @@ const cv = Buffer.from("%PDF-1.4\nTest CV\n%%EOF");
 function auth(role) {
   return `Bearer ${tokens[role]}`;
 }
+test('activity records persist with actor and time and are restricted to super admins', async () => {
+  await request(app).get('/api/activity-logs').expect(401);
+  for (const role of ['user', 'admin']) {
+    await request(app).get('/api/activity-logs').set('Authorization', auth(role)).expect(403);
+  }
+  await request(app).put('/api/users/user').set('Authorization', auth('user'))
+    .send({ age: 27, password: 'must-not-be-logged', otp: 'secret' }).expect(200);
+  // Logging follows response completion; wait for the persisted record.
+  let entry;
+  for (let attempt = 0; attempt < 50 && !entry; attempt++) {
+    entry = await ActivityLog.findOne({ userName: 'user', action: 'Updated user profile or permissions' }).lean();
+    if (!entry) await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert(entry);
+  assert.equal(entry.role, 'user');
+  assert.equal(entry.target, 'user');
+  assert(entry.occurredAt instanceof Date);
+  assert(!JSON.stringify(entry).includes('must-not-be-logged'));
+  assert(!JSON.stringify(entry).includes('secret'));
+  const response = await request(app).get('/api/activity-logs?role=user&userName=user').set('Authorization', auth('superadmin')).expect(200);
+  assert(response.body.items.some(item => item._id === String(entry._id)));
+  await request(app).get('/api/activity-logs?page=-1').set('Authorization', auth('superadmin')).expect(400);
+});
 function submit(jobId = "JOB00001", overrides = {}) {
   const body = {
     jobId,

@@ -122,6 +122,7 @@ export function loginUser(req, res) {
                 { expiresIn: '1d' }
             );
 
+            req.auditActor = user;
             res.json({ message: "login successfully", token, type: user.role });
         } else {
             res.status(401).json({ message: "invalid password" });
@@ -153,6 +154,7 @@ export async function verifyEmail(req, res) {
             user.otpExpires = null;
             await user.save();
         }
+        req.auditActor = user;
         res.status(200).json({ message: "Email verified successfully" });
     } catch (error) {
         res.status(500).json({ message: "Server error", error: undefined });
@@ -198,6 +200,7 @@ export async function resetPassword(req, res) {
         user.otp = null;
         user.otpExpires = null;
         await user.save();
+        req.auditActor = user;
         res.status(200).json({ message: "Password reset successfully" });
     } catch (error) {
         res.status(500).json({ message: "Server error", error: undefined });
