@@ -11,6 +11,7 @@ export function requireRoles(...roles) {
     const user = await User.findOne({ userName: req.user.userName }).select(
       "-password -otp -otpExpires",
     );
+    if (user && (req.user.authVersion || 0) !== (user.authVersion || 0)) return res.status(401).json({ message: "Session expired. Please log in again." });
     if (!user || user.isBlocked)
       return res
         .status(403)
@@ -27,8 +28,12 @@ export function requireRoles(...roles) {
 export async function applicationScope(user) {
   if (user.role !== "admin") return {};
   if (!user.faculty || !user.department) return { _id: { $in: [] } };
-  const scope = { faculty: user.faculty };
-  scope.department = user.department;
+  // Explicit wildcard assignments grant access across that dimension.
+  // Missing assignments still deny access above.
+  const scope = {};
+  if (user.faculty !== "*") scope.faculty = user.faculty;
+  if (user.department !== "*") scope.department = user.department;
+  if (!Object.keys(scope).length) return {};
   // Historical applications did not store faculty/department; resolve them via their vacancy.
   const { default: JobVacancy } = await import("../models/jobVacancyModel.js");
   const jobs = await JobVacancy.find(scope).select("jobId").lean();

@@ -1,3 +1,4 @@
+import { randomBytes, randomInt } from 'node:crypto';
 import passport from "passport";
 import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import User from "../models/user.js";
@@ -11,23 +12,24 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) passport.u
     {
       clientID: process.env.GOOGLE_CLIENT_ID,
       clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-      callbackURL: "http://localhost:3000/api/users/auth/google/callback",
+      callbackURL: process.env.GOOGLE_CALLBACK_URL || "http://localhost:3000/api/users/auth/google/callback",
       proxy: true
     },
     async (accessToken, refreshToken, profile, done) => {
       try {
+        if (!profile.emails?.[0]?.value || profile.emails[0].verified === false) return done(null, false);
         // 1. Check if user already exists
         let user = await User.findOne({ email: profile.emails[0].value });
 
         if (!user) {
           // 2. If new user, create an account
           // Generate a secure random password to satisfy the DB schema
-          const randomPassword = Math.random().toString(36).slice(-10) + "A1@";
-          const hashedPassword = bcrypt.hashSync(randomPassword, 10);
+          const randomPassword = randomBytes(32).toString("hex");
+          const hashedPassword = await bcrypt.hash(randomPassword, 12);
 
           // Generate a unique userName based on their email
           const baseUserName = profile.emails[0].value.split("@")[0];
-          const uniqueUserName = baseUserName + Math.floor(Math.random() * 10000);
+          const uniqueUserName = baseUserName + randomInt(100000, 1000000);
 
           user = new User({
             email: profile.emails[0].value,

@@ -4,7 +4,7 @@ import mongoose from "mongoose";
 const applySchema = mongoose.Schema({
 
     nic: { type: String }, // Optional on historical records; required by submission validation.
-    category: { type: String, enum: ['lecturer', 'probationary', 'demo'] },
+    category: { type: String, trim: true, maxlength: 150 },
     faculty: String,
     department: String,
     status: { type: String, enum: ['pending', 'shortlisted', 'selected', 'rejected', 'hold'], default: 'pending' },

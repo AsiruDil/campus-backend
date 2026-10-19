@@ -1,6 +1,6 @@
+import { uploadCloud, readCloud, removeCloud } from './storage.js';
 import multer from "multer";
 import JSZip from "jszip";
-import { mkdir, writeFile, readFile, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 
@@ -31,14 +31,6 @@ export function documentError(message) {
   const error = new Error(message);
   error.status = 400;
   return error;
-}
-export function storageRoot() {
-  return path.resolve(process.env.UPLOAD_DIR || "./uploads");
-}
-function storagePath(key) {
-  if (!/^[a-f0-9-]+\.zip$/.test(key))
-    throw documentError("Invalid document reference.");
-  return path.join(storageRoot(), key);
 }
 function validDocument(file, cv = false) {
   const ext = path.extname(file.originalname).toLowerCase();
@@ -89,27 +81,21 @@ export async function createArchive(files) {
     };
   });
   const key = `${randomUUID()}.zip`;
-  await mkdir(storageRoot(), { recursive: true, mode: 0o700 });
-  await writeFile(
-    storagePath(key),
-    await zip.generateAsync({ type: "nodebuffer", compression: "DEFLATE" }),
-    { mode: 0o600, flag: "wx" },
-  );
-  return { archiveKey: key, cvSize: cv.size, supportingDocuments };
+  const buffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+  const archiveKey = await uploadCloud('documents', key, buffer, 'application/zip');
+  return { archiveKey, cvSize: cv.size, supportingDocuments };
 }
 export function readArchive(key) {
-  return readFile(storagePath(key));
+  if (!key?.startsWith('supabase:')) throw documentError('This document needs migration to Supabase before downloading.');
+  return readCloud(key);
 }
 export async function readCV(key) {
   const zip = await JSZip.loadAsync(await readArchive(key));
   return zip.file("CV.pdf").async("nodebuffer");
 }
 export async function removeArchive(key) {
-  try {
-    await unlink(storagePath(key));
-  } catch (error) {
-    if (error.code !== "ENOENT") throw error;
-  }
+  if (!key?.startsWith('supabase:')) throw documentError('Migrate this document to Supabase before deleting it through retention.');
+  return removeCloud(key);
 }
 // Delete legacy public Supabase CVs only through a trusted, explicitly configured bucket.
 export async function removeLegacyCV(url) {
